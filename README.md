@@ -147,8 +147,9 @@ java -jar bin/gsl5.jar mcp 192.168.1.10:9123
 然后在 Claude / Codex 的 MCP 配置中添加（详见 [MCP 服务](#mcp-服务ai-操控)）。
 
 ### 4. 下载预编译 Release
-- **3.1.1（最新）**：https://github.com/Xaaaa-bip/GodzillaSuper/releases/tag/3.1.1
-- jar：https://github.com/Xaaaa-bip/GodzillaSuper/releases/download/3.1.1/gsl5.jar
+- **3.1.2（最新）**：https://github.com/Xaaaa-bip/GodzillaSuper/releases/tag/3.1.2
+- jar：https://github.com/Xaaaa-bip/GodzillaSuper/releases/download/3.1.2/gsl5.jar
+- **3.1.1**：https://github.com/Xaaaa-bip/GodzillaSuper/releases/tag/3.1.1
 - **3.1.0**：https://github.com/Xaaaa-bip/GodzillaSuper/releases/tag/3.1.0
 - **3.0**：https://github.com/Xaaaa-bip/GodzillaSuper/releases/tag/3.0
 
