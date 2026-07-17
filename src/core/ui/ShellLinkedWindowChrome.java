@@ -60,15 +60,22 @@ public final class ShellLinkedWindowChrome {
             ensureWallpaperWrapped(frame);
             softenInternals(frame);
             ModernUi.applyWindowOpacityTo(frame);
+            hideStuckLoadingOverlay(frame);
             ((Timer) ev.getSource()).stop();
         });
         late.setRepeats(false);
         late.start();
-        Timer stripStuck = new Timer(2200, ev -> {
+        // Poll a few times: load finishes async; wallpaper wrap races with remove(loadLabel).
+        final int[] ticks = {0};
+        Timer stripStuck = new Timer(400, ev -> {
             hideStuckLoadingOverlay(frame);
-            ((Timer) ev.getSource()).stop();
+            ticks[0]++;
+            if (ticks[0] >= 20 || (frame instanceof ShellManage && ((ShellManage) frame).isUiReady())) {
+                hideStuckLoadingOverlay(frame);
+                ((Timer) ev.getSource()).stop();
+            }
         });
-        stripStuck.setRepeats(false);
+        stripStuck.setRepeats(true);
         stripStuck.start();
     }
 
@@ -104,15 +111,18 @@ public final class ShellLinkedWindowChrome {
         if (c == null) {
             return;
         }
-        for (Component ch : c.getComponents()) {
+        Component[] kids = c.getComponents();
+        for (Component ch : kids) {
             if (ch instanceof JLabel) {
                 String t = ((JLabel) ch).getText();
-                if (t != null && t.contains(LOADING_VIS_SUB)) {
-                    ch.setVisible(false);
-                    Container p = ch.getParent();
-                    if (p instanceof JComponent) {
-                        ((JComponent) p).setVisible(false);
-                    }
+                if (t != null && (t.contains(LOADING_VIS_SUB)
+                        || t.contains("正在加载")
+                        || t.contains("正在连接")
+                        || t.startsWith("loading"))) {
+                    // Prefer remove over setVisible: residual labels stay in layout otherwise.
+                    c.remove(ch);
+                    c.revalidate();
+                    c.repaint();
                 }
             } else if (ch instanceof Container) {
                 hideLoadingLabelsInTree((Container) ch);
@@ -124,18 +134,21 @@ public final class ShellLinkedWindowChrome {
         Container cp = frame.getContentPane();
         if (cp instanceof WallpaperLayerPanel) {
             ((WallpaperLayerPanel) cp).reloadFromSettings();
+            hideStuckLoadingOverlay(frame);
             return;
         }
         if (!(cp instanceof JPanel)) {
             return;
         }
         JPanel inner = (JPanel) cp;
+        // Snapshot children before wrap so loadLabel/tabbedPane stay under the same panel.
         WallpaperLayerPanel wall = new WallpaperLayerPanel();
         wall.setContentRoot(inner);
         frame.setContentPane(wall);
         inner.setOpaque(false);
         wall.reloadFromSettings();
         ModernUi.applyWindowOpacityTo(frame);
+        hideStuckLoadingOverlay(frame);
     }
 
     private static void softenInternals(JFrame frame) {

