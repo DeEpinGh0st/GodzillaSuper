@@ -547,16 +547,31 @@ public class McpService implements Plugin {
             running = true;
             String primary = preferredAccessHost();
             Log.log("[MCP] Headless bind=" + bindHost + ":" + port + " auth=" + maskToken(authToken));
-            System.out.println("[MCP] Headless bind=" + bindHost + ":" + port);
-            System.out.println("[MCP] Auth: Bearer " + maskToken(authToken) + " (full token in " + tokenFilePath() + " or env " + TOKEN_ENV + ")");
-            System.out.println("[MCP] Access URLs:");
-            for (String u : listAccessUrls()) System.out.println("  " + u);
-            System.out.println("[MCP] Recommended SSE: http://" + primary + ":" + port + "/sse");
-            System.out.println("[MCP] Header required: Authorization: Bearer " + authToken);
-            // Auto-write Claude + Codex client configs
-            System.out.println("\n[MCP] Writing client configs...");
-            System.out.print(dummy.doWriteClaudeConfigs(true));
-            System.out.print(dummy.doWriteCodexConfig(true));
+
+            // Compact headless output
+            System.out.println();
+            System.out.println("=== GSL MCP " + core.ApplicationContext.RELEASE_TAG + " ===");
+            System.out.println("Bind: " + bindHost + ":" + port);
+            System.out.println("Token: " + authToken);
+            System.out.println();
+            for (String u : listAccessUrls()) {
+                System.out.println("  " + u + "/sse");
+            }
+            System.out.println();
+            System.out.println("Authorization: Bearer " + authToken);
+            System.out.println();
+
+            // Auto-write client configs
+            String claudeMsg = dummy.doWriteClaudeConfigs(true);
+            String codexMsg = dummy.doWriteCodexConfig(true);
+            System.out.println("Config written:");
+            for (String line : claudeMsg.split("\n")) {
+                if (line.startsWith("[OK]")) System.out.println("  " + line.substring(4).trim());
+            }
+            for (String line : codexMsg.split("\n")) {
+                if (line.startsWith("[OK]")) System.out.println("  " + line.substring(4).trim());
+            }
+            System.out.println();
             Runtime.getRuntime().addShutdownHook(new Thread(() -> {
                 if (server != null) { server.stop(0); running = false; }
                 System.out.println("[MCP] Server stopped.");
