@@ -340,6 +340,15 @@ public class McpService implements Plugin {
         } catch (Exception ex) {
             msg.append("[FAIL] settings.json: ").append(ex.getMessage()).append("\n");
         }
+
+        // 5) Claude Code 2.x: ~/.claude.json (per-project mcpServers)
+        String ccjsonPath = claudeDir + File.separator + ".claude.json";
+        try {
+            String ccResult = writeClaudeCode2xConfig(ccjsonPath);
+            msg.append(ccResult);
+        } catch (Exception ex) {
+            msg.append("[FAIL] .claude.json: ").append(ex.getMessage()).append("\n");
+        }
         return msg.toString();
     }
 
@@ -439,6 +448,161 @@ public class McpService implements Plugin {
             }
         }
         return null;
+    }
+
+    /**
+     * Write gsl5 server into ~/.claude.json for Claude Code 2.x (per-project config).
+     */
+    private static String writeClaudeCode2xConfig(String path) {
+        String cwd = System.getProperty("user.dir");
+        String gsl5Server = "\"gsl5\": " + buildMcpJson(preferredAccessHost()) + "";
+        // Extract just the gsl5 server object: { "type": "sse", ... }
+        int blockStart = gsl5Server.indexOf('{');
+        if (blockStart < 0) return "[FAIL] .claude.json: bad server block\n";
+        String gsl5Block = gsl5Server.substring(blockStart);
+
+        java.io.File f = new java.io.File(path);
+        String content;
+        try {
+            if (f.exists()) {
+                content = new String(Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8);
+            } else {
+                // create minimal file
+                content = "{\n  \"projects\": {\n  }\n}";
+            }
+        } catch (Exception ex) {
+            return "[FAIL] .claude.json: read error - " + ex.getMessage() + "\n";
+        }
+
+        // Find or create the project entry for cwd
+        String escapedCwd = escapeJsonString(cwd);
+        String result;
+        if (content.contains(escapedCwd)) {
+            result = mergeProjectEntry(content, escapedCwd, gsl5Block);
+        } else {
+            result = addProjectEntry(content, escapedCwd, gsl5Block);
+        }
+
+        try {
+            if (f.getParentFile() != null) f.getParentFile().mkdirs();
+            Files.write(f.toPath(), result.getBytes(StandardCharsets.UTF_8));
+            return "[OK] Claude Code 2.x .claude.json: " + path + "\n";
+        } catch (Exception ex) {
+            return "[FAIL] .claude.json: write error - " + ex.getMessage() + "\n";
+        }
+    }
+
+    /** Merge gsl5 into an existing project entry in ~/.claude.json. */
+    private static String mergeProjectEntry(String content, String escapedCwd, String gsl5Block) {
+        int projStart = content.indexOf(escapedCwd);
+        int brace = content.indexOf('{', projStart);
+        if (brace < 0) return content;
+        int projEnd = findMatchingBrace(content, brace);
+        if (projEnd < 0) return content;
+        String projBlock = content.substring(projStart, projEnd + 1);
+
+        // Merge gsl5 into mcpServers inside the project block
+        String updatedBlock = projBlock;
+        if (updatedBlock.contains("\"gsl5\"")) {
+            // Replace existing gsl5 entry
+            String oldGsl5 = extractBlockByKey(updatedBlock, "\"gsl5\"");
+            if (oldGsl5 != null) {
+                updatedBlock = updatedBlock.replace(oldGsl5, "\"gsl5\": " + gsl5Block);
+            }
+        } else if (updatedBlock.contains("\"mcpServers\"")) {
+            // Insert into existing mcpServers
+            int msIdx = updatedBlock.indexOf("\"mcpServers\"");
+            int msBrace = updatedBlock.indexOf('{', msIdx);
+            if (msBrace > 0) {
+                String afterBrace = updatedBlock.substring(msBrace + 1).trim();
+                boolean empty = afterBrace.startsWith("}");
+                String insert = "\n        \"gsl5\": " + gsl5Block + (empty ? "\n      " : ",\n        ");
+                updatedBlock = updatedBlock.substring(0, msBrace + 1) + insert + updatedBlock.substring(msBrace + 1);
+            }
+        } else {
+            // No mcpServers yet, add one
+            String[] lines = updatedBlock.split("\n");
+            StringBuilder sb = new StringBuilder();
+            sb.append(lines[0]).append("\n");
+            sb.append("      \"mcpServers\": {\n");
+            sb.append("        \"gsl5\": ").append(gsl5Block).append("\n");
+            sb.append("      },\n");
+            for (int i = 1; i < lines.length; i++) sb.append(lines[i]).append("\n");
+            updatedBlock = sb.toString().trim();
+            // fix trailing newline artifact
+            if (updatedBlock.endsWith("\n")) updatedBlock = updatedBlock.substring(0, updatedBlock.length() - 1);
+        }
+
+        // Ensure enabledMcpjsonServers includes gsl5
+        if (updatedBlock.contains("\"enabledMcpjsonServers\"")) {
+            int ensIdx = updatedBlock.indexOf("\"enabledMcpjsonServers\"");
+            int bracket = updatedBlock.indexOf('[', ensIdx);
+            if (bracket > 0 && !updatedBlock.substring(bracket, bracket + 4).contains("gsl5")) {
+                updatedBlock = updatedBlock.substring(0, bracket + 1)
+                        + "\"gsl5\""
+                        + (updatedBlock.charAt(bracket + 1) == ']' ? "" : ", ")
+                        + updatedBlock.substring(bracket + 1);
+            }
+        }
+
+        return content.substring(0, projStart) + updatedBlock + content.substring(projEnd + 1);
+    }
+
+    /** Add a new project entry into ~/.claude.json. */
+    private static String addProjectEntry(String content, String escapedCwd, String gsl5Block) {
+        String entry = "\n    " + escapedCwd + ": {\n"
+                + "      \"mcpServers\": {\n"
+                + "        \"gsl5\": " + gsl5Block + "\n"
+                + "      },\n"
+                + "      \"enabledMcpjsonServers\": [\"gsl5\"]\n"
+                + "    }";
+        int projIdx = content.indexOf("\"projects\"");
+        if (projIdx >= 0) {
+            int projBrace = content.indexOf('{', projIdx);
+            if (projBrace > 0) {
+                String afterBrace = content.substring(projBrace + 1).trim();
+                if (afterBrace.startsWith("}")) {
+                    // empty projects object
+                    return content.substring(0, projBrace + 1) + entry + "\n  " + content.substring(projBrace + 1);
+                } else {
+                    // non-empty: prefix with comma
+                    return content.substring(0, projBrace + 1) + entry + ",\n  " + content.substring(projBrace + 1);
+                }
+            }
+        }
+        return content; // shouldn't happen
+    }
+
+    /** Find the index of the matching closing brace starting from openBrace. */
+    private static int findMatchingBrace(String s, int openBrace) {
+        int depth = 0;
+        for (int i = openBrace; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c == '{') depth++;
+            else if (c == '}') {
+                depth--;
+                if (depth == 0) return i;
+            }
+        }
+        return -1;
+    }
+
+    /** Extract a JSON block by key using brace matching. Returns '"key": {...}' */
+    private static String extractBlockByKey(String json, String key) {
+        int i = json.indexOf(key);
+        if (i < 0) return null;
+        // find the colon and then the opening brace
+        int colon = json.indexOf(':', i);
+        if (colon < 0) return null;
+        int brace = json.indexOf('{', colon);
+        if (brace < 0) return null;
+        int end = findMatchingBrace(json, brace);
+        if (end < 0) return null;
+        return json.substring(i, end + 1).trim();
+    }
+
+    private static String escapeJsonString(String s) {
+        return "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
     }
 
     private static String buildCodexToml(String host) {
