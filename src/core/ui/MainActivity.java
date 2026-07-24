@@ -330,11 +330,15 @@ public class MainActivity extends JFrame {
         bindAutoHidePopup(appConfigMenuItem);
         bindAutoHidePopup(pluginConfigMenuItem);
         bindAutoHidePopup(operationAuditLogMenuItem);
-        this.aboutMenu = new JMenu("\u8d5e\u52a9");
+        this.aboutMenu = new JMenu("\u66f4\u65b0");
         JMenuItem sponsorMenuItem = new JMenuItem("\u8d5e\u52a9\u4f5c\u8005");
         sponsorMenuItem.setActionCommand("about");
         this.aboutMenu.add(sponsorMenuItem);
         bindAutoHidePopup(sponsorMenuItem);
+        JMenuItem checkUpdateMenuItem = new JMenuItem("\u68c0\u67e5\u66f4\u65b0");
+        checkUpdateMenuItem.setActionCommand("checkUpdate");
+        this.aboutMenu.add(checkUpdateMenuItem);
+        bindAutoHidePopup(checkUpdateMenuItem);
         this.shellGroupTree.setActionDbclick((e) -> {
             String nextGroup = this.shellGroupTree.GetSelectFile().trim();
             OperationAuditLog.ui("\u4e3b\u754c\u9762", "\u5207\u6362\u5206\u7ec4", nextGroup);
@@ -431,6 +435,8 @@ public class MainActivity extends JFrame {
         this.installGlobalKeyboardHandler();
         this.setVisible(true);
         this.setDefaultCloseOperation(3);
+        // startup silent check; only prompts if update available
+        SwingUtilities.invokeLater(() -> checkForUpdate(true));
     }
 
     private void installGlobalKeyboardHandler() {
@@ -844,6 +850,78 @@ public class MainActivity extends JFrame {
         private void aboutMenuItemClick(ActionEvent e) {
         this.hideShellViewPopupMenu();
         GOptionPane.showMessageDialog(getFrame(), "\u611f\u8c22\u60a8\u7684\u652f\u6301\uff01", "\u8d5e\u52a9", 1);
+    }
+        private void checkUpdateMenuItemClick(ActionEvent e) {
+        this.hideShellViewPopupMenu();
+        checkForUpdate(false);
+    }
+
+    private static void checkForUpdate(boolean silentUpToDate) {
+        new Thread(() -> {
+            try {
+                java.net.URL url = new java.net.URL("https://api.github.com/repos/Xaaaa-bip/GodzillaSuper/releases/latest");
+                java.net.HttpURLConnection conn = (java.net.HttpURLConnection) url.openConnection();
+                conn.setRequestMethod("GET");
+                conn.setRequestProperty("Accept", "application/vnd.github+json");
+                conn.setConnectTimeout(8000);
+                conn.setReadTimeout(8000);
+                conn.connect();
+                int code = conn.getResponseCode();
+                if (code != 200) {
+                    SwingUtilities.invokeLater(() ->
+                        GOptionPane.showMessageDialog(getFrame(), "\u68c0\u67e5\u66f4\u65b0\u5931\u8d25 (HTTP " + code + ")", "\u68c0\u67e5\u66f4\u65b0", 2));
+                    return;
+                }
+                java.io.InputStream is = conn.getInputStream();
+                byte[] buf = new byte[8192];
+                java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
+                int n;
+                while ((n = is.read(buf)) != -1) bos.write(buf, 0, n);
+                is.close();
+                conn.disconnect();
+                String json = new String(bos.toByteArray(), "UTF-8");
+                // extract "tag_name"
+                String latestTag = extractJsonString(json, "tag_name");
+                if (latestTag == null || latestTag.isEmpty()) {
+                    SwingUtilities.invokeLater(() ->
+                        GOptionPane.showMessageDialog(getFrame(), "\u89e3\u6790\u7248\u672c\u4fe1\u606f\u5931\u8d25", "\u68c0\u67e5\u66f4\u65b0", 2));
+                    return;
+                }
+                String currentTag = core.ApplicationContext.RELEASE_TAG;
+                final String latest = latestTag;
+                if (currentTag.equals(latestTag)) {
+                    if (!silentUpToDate) {
+                        SwingUtilities.invokeLater(() ->
+                            GOptionPane.showMessageDialog(getFrame(), "\u5df2\u662f\u6700\u65b0\u7248\u672c " + currentTag, "\u68c0\u67e5\u66f4\u65b0", 1));
+                    }
+                } else {
+                    String htmlUrl = extractJsonString(json, "html_url");
+                    final String urlStr = (htmlUrl != null && !htmlUrl.isEmpty()) ? htmlUrl
+                            : "https://github.com/Xaaaa-bip/GodzillaSuper/releases/tag/" + latestTag;
+                    SwingUtilities.invokeLater(() -> {
+                        int choice = GOptionPane.showConfirmDialog(getFrame(),
+                            "\u53d1\u73b0\u65b0\u7248\u672c " + latest + "\uff01\n\u5f53\u524d\u7248\u672c: " + currentTag + "\n\n\u662f\u5426\u6253\u5f00\u4e0b\u8f7d\u9875\u9762\uff1f",
+                            "\u68c0\u67e5\u66f4\u65b0", GOptionPane.OK_CANCEL_OPTION, 1);
+                        if (choice == GOptionPane.OK_OPTION) {
+                            try {
+                                java.awt.Desktop.getDesktop().browse(new java.net.URI(urlStr));
+                            } catch (Exception ex) {
+                                Log.error(ex);
+                            }
+                        }
+                    });
+                }
+            } catch (Exception ex) {
+                Log.error(ex);
+                SwingUtilities.invokeLater(() ->
+                    GOptionPane.showMessageDialog(getFrame(), "\u68c0\u67e5\u66f4\u65b0\u5931\u8d25: " + ex.getMessage(), "\u68c0\u67e5\u66f4\u65b0", 2));
+            }
+        }).start();
+    }
+
+    private static String extractJsonString(String json, String key) {
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("\"" + key + "\"\\s*:\\s*\"([^\"]+)\"").matcher(json);
+        return m.find() ? m.group(1) : null;
     }private void copyShellViewSelectedMenuItemClick(ActionEvent e) {
         this.hideShellViewPopupMenu();
         int columnIndex = this.shellView.getSelectedColumn();

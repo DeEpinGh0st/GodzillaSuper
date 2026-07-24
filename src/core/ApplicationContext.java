@@ -232,6 +232,9 @@ public class ApplicationContext {
 
     public static final String VERSION = "4.15";
 
+    /** GSL release tag, checked against GitHub latest for update notification. */
+    public static final String RELEASE_TAG = "3.1.3";
+
 
 
     public static final int JAVA_VERSION = (int)(Float.parseFloat(System.getProperty("java.class.version")) - 44.0F);
