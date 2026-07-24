@@ -52,12 +52,17 @@ import util.functions;
 public class McpService implements Plugin {
 
     private static final int DEFAULT_PORT = 9123;
-    private static final String DEFAULT_BIND = "0.0.0.0";
+    /** Safe default: loopback only. Use 0.0.0.0 only when intentionally exposing. */
+    private static final String DEFAULT_BIND = "127.0.0.1";
+    private static final String TOKEN_ENV = "GSL5_MCP_TOKEN";
+    private static final String TOKEN_FILE_NAME = "mcp.token";
     private static HttpServer server;
     private static boolean running = false;
     private static int port = DEFAULT_PORT;
     /** bind address: 0.0.0.0 / 127.0.0.1 / NIC IP */
     private static String bindHost = DEFAULT_BIND;
+    /** Bearer token required on /sse /message /health /config. Empty = reject non-loopback. */
+    private static volatile String authToken = "";
     private static final ConcurrentLinkedQueue<HttpExchange> sseClients = new ConcurrentLinkedQueue<>();
     private static final Yaml yaml = new Yaml();
     private static final java.util.concurrent.ConcurrentHashMap<String, ShellEntity> shellCache = new java.util.concurrent.ConcurrentHashMap<>();
@@ -66,6 +71,8 @@ public class McpService implements Plugin {
     private JPanel panel;
     private JTextField portField;
     private JTextField hostField;
+    private JTextField tokenField;
+    private JButton genTokenBtn;
     private JButton startBtn;
     private JButton stopBtn;
     private JTextArea logArea;
@@ -76,12 +83,13 @@ public class McpService implements Plugin {
 
     public McpService() {
         panel = new JPanel(new BorderLayout(6, 6));
+        ensureAuthToken();
 
         // Row 1: bind + port + start/stop
         JPanel row1 = new JPanel();
         row1.add(new JLabel("\u7ed1\u5b9a:"));
         hostField = new JTextField(DEFAULT_BIND, 12);
-        hostField.setToolTipText("0.0.0.0=\u5168\u7f51\u5361  127.0.0.1=\u4ec5\u672c\u673a  \u6216\u586b\u7f51\u5361IP");
+        hostField.setToolTipText("127.0.0.1=\u4ec5\u672c\u673a  0.0.0.0=\u5168\u7f51\u5361  \u6216\u586b\u7f51\u5361IP\uff08\u975e\u672c\u673a\u5fc5\u987b\u914d Token\uff09");
         row1.add(hostField);
         row1.add(new JLabel("\u7aef\u53e3:"));
         portField = new JTextField(String.valueOf(DEFAULT_PORT), 6);
@@ -94,23 +102,35 @@ public class McpService implements Plugin {
         statusLabel = new JLabel("\u72b6\u6001: \u5df2\u505c\u6b62");
         row1.add(statusLabel);
 
+        // Row 1b: Bearer Token
+        JPanel rowToken = new JPanel();
+        rowToken.add(new JLabel("Token:"));
+        tokenField = new JTextField(authToken != null ? authToken : "", 28);
+        tokenField.setToolTipText("Bearer Token\uff1b\u8bf7\u6c42\u5934 Authorization: Bearer <token>\uff1b\u4e00\u952e\u5199\u5165\u914d\u7f6e\u4f1a\u81ea\u52a8\u5e26\u4e0a");
+        rowToken.add(tokenField);
+        genTokenBtn = new JButton("\u91cd\u65b0\u751f\u6210");
+        genTokenBtn.setToolTipText("\u751f\u6210\u65b0 Token \u5e76\u4fdd\u5b58\u5230 profile/mcp.token");
+        rowToken.add(genTokenBtn);
+
         // Row 2: Claude / Codex writers
         JPanel row2 = new JPanel();
         writeConfigBtn = new JButton("\u5199\u5165\u5168\u90e8\u914d\u7f6e");
-        writeConfigBtn.setToolTipText("Claude Code + Claude Desktop + Codex");
+        writeConfigBtn.setToolTipText("Claude Code + Claude Desktop + Codex\uff08\u81ea\u52a8\u5e26 Authorization header\uff09");
         row2.add(writeConfigBtn);
         writeClaudeBtn = new JButton("\u5199\u5165 Claude");
         writeClaudeBtn.setToolTipText("~/.claude/mcp.json + Desktop claude_desktop_config.json");
         row2.add(writeClaudeBtn);
         writeCodexBtn = new JButton("\u5199\u5165 Codex");
-        writeCodexBtn.setToolTipText("~/.codex/config.toml [mcp_servers.gsl5]");
+        writeCodexBtn.setToolTipText("~/.codex/config.toml [mcp_servers.gsl5] + http_headers");
         row2.add(writeCodexBtn);
 
         JPanel topPanel = new JPanel();
         topPanel.setLayout(new BoxLayout(topPanel, BoxLayout.Y_AXIS));
         row1.setAlignmentX(0.0f);
+        rowToken.setAlignmentX(0.0f);
         row2.setAlignmentX(0.0f);
         topPanel.add(row1);
+        topPanel.add(rowToken);
         topPanel.add(row2);
         panel.add(topPanel, BorderLayout.NORTH);
 
@@ -122,23 +142,48 @@ public class McpService implements Plugin {
     }
     public void init(ShellEntity shellEntity) { refreshUiState(); }
     public JPanel getView() { refreshUiState(); return panel; }
-    public void writeConfigBtnClick(ActionEvent e) { writeAllClientConfigs(); }
-    public void writeClaudeBtnClick(ActionEvent e) { writeClaudeConfigOnly(); }
-    public void writeCodexBtnClick(ActionEvent e) { writeCodexConfigOnly(); }
+    public void writeConfigBtnClick(ActionEvent e) { syncTokenFromUi(); writeAllClientConfigs(); }
+    public void writeClaudeBtnClick(ActionEvent e) { syncTokenFromUi(); writeClaudeConfigOnly(); }
+    public void writeCodexBtnClick(ActionEvent e) { syncTokenFromUi(); writeCodexConfigOnly(); }
     public void startBtnClick(ActionEvent e) { startMcpServer(); }
     public void stopBtnClick(ActionEvent e) { stopMcpServer(); }
+    public void genTokenBtnClick(ActionEvent e) {
+        String t = generateToken();
+        setAuthToken(t, true);
+        if (tokenField != null) tokenField.setText(t);
+        log("[MCP] Token \u5df2\u91cd\u65b0\u751f\u6210\u5e76\u4fdd\u5b58: " + tokenFilePath());
+        if (!running) {
+            GOptionPane.showMessageDialog(panel, "\u65b0 Token \u5df2\u751f\u6210\u3002\u8bf7\u91cd\u65b0\u300c\u5199\u5165\u914d\u7f6e\u300d\u4ee5\u540c\u6b65\u5ba2\u6237\u7aef\u3002", "Token", 1);
+        } else {
+            GOptionPane.showMessageDialog(panel, "Token \u5df2\u66f4\u65b0\uff08\u8fd0\u884c\u4e2d\u7acb\u5373\u751f\u6548\uff09\u3002\u8bf7\u91cd\u65b0\u300c\u5199\u5165\u914d\u7f6e\u300d\u3002", "Token", 1);
+        }
+    }
+
+    /** Apply token from UI field before start/write-config. */
+    private void syncTokenFromUi() {
+        if (tokenField != null) {
+            String uiToken = tokenField.getText() != null ? tokenField.getText().trim() : "";
+            if (!uiToken.isEmpty()) setAuthToken(uiToken, true);
+            else ensureAuthToken();
+        } else {
+            ensureAuthToken();
+        }
+    }
 
     private void refreshUiState() {
         try {
             if (startBtn != null) startBtn.setEnabled(!running);
             if (stopBtn != null) stopBtn.setEnabled(running);
+            if (genTokenBtn != null) genTokenBtn.setEnabled(true);
             if (statusLabel != null) {
+                String authHint = (authToken != null && !authToken.isEmpty()) ? " auth=on" : " auth=off";
                 statusLabel.setText(running
-                        ? ("\u72b6\u6001: \u8fd0\u884c\u4e2d (" + bindHost + ":" + port + ")")
+                        ? ("\u72b6\u6001: \u8fd0\u884c\u4e2d (" + bindHost + ":" + port + ")" + authHint)
                         : "\u72b6\u6001: \u5df2\u505c\u6b62");
             }
             if (portField != null && !running) portField.setText(String.valueOf(port > 0 ? port : DEFAULT_PORT));
             if (hostField != null && !running && bindHost != null) hostField.setText(bindHost);
+            if (tokenField != null && !running && authToken != null) tokenField.setText(authToken);
         } catch (Exception ignored) {}
     }
 
@@ -146,21 +191,34 @@ public class McpService implements Plugin {
         if (running) return;
         try { port = Integer.parseInt(portField.getText().trim()); } catch (Exception e) { port = DEFAULT_PORT; }
         bindHost = normalizeBindHost(hostField != null ? hostField.getText() : DEFAULT_BIND);
+        // sync token from UI
+        syncTokenFromUi();
+        if (!isLoopbackBind(bindHost) && (authToken == null || authToken.isEmpty())) {
+            GOptionPane.showMessageDialog(panel,
+                    "\u975e\u672c\u673a\u7ed1\u5b9a (" + bindHost + ") \u5fc5\u987b\u8bbe\u7f6e Token\u3002\n\u8bf7\u70b9\u300c\u91cd\u65b0\u751f\u6210\u300d\u6216\u624b\u52a8\u586b\u5165 Token\u3002",
+                    "\u5b89\u5168", 2);
+            return;
+        }
         try {
             server = HttpServer.create(new InetSocketAddress(java.net.InetAddress.getByName(bindHost), port), 0);
             server.setExecutor(Executors.newFixedThreadPool(4));
             server.createContext("/sse", new SseHandler());
             server.createContext("/message", new MessageHandler());
-            server.createContext("/health", (ex) -> sendJson(ex, 200, j("status","ok","running",true,"port",port,"bind",bindHost,"urls",listAccessUrls())));
+            server.createContext("/health", new HealthHandler());
             server.createContext("/config", new ConfigHandler());
             server.start();
             running = true;
             refreshUiState();
             String primary = preferredAccessHost();
             log("[MCP] \u670d\u52a1\u5df2\u542f\u52a8 bind=" + bindHost + ":" + port);
+            log("[MCP] Auth: Bearer Token " + maskToken(authToken));
             log("[MCP] \u8bbf\u95ee\u5730\u5740:");
             for (String u : listAccessUrls()) log("  " + u);
             log("[MCP] \u63a8\u8350 SSE: http://" + primary + ":" + port + "/sse");
+            log("[MCP] \u5ba2\u6237\u7aef\u9700\u8981 Header: Authorization: Bearer <token>");
+            if (!isLoopbackBind(bindHost)) {
+                log("[MCP] \u8b66\u544a: \u5df2\u7ed1\u5b9a\u975e\u672c\u673a\u5730\u5740\uff0c\u8bf7\u786e\u4fdd\u9632\u706b\u5899\u4e0e Token \u4e0d\u6cc4\u9732");
+            }
         } catch (Exception e) {
             log("[MCP] \u542f\u52a8\u5931\u8d25: " + e.getMessage());
             GOptionPane.showMessageDialog(panel, "\u542f\u52a8\u5931\u8d25: " + e.getMessage(), "\u9519\u8bef", 2);
@@ -202,7 +260,14 @@ public class McpService implements Plugin {
         msg.append("bind: ").append(bindHost).append(":").append(port).append("\n");
         msg.append("access URLs:\n");
         for (String u : listAccessUrls()) msg.append("  ").append(u).append("\n");
-        msg.append("config host: ").append(host).append("\n\n");
+        msg.append("config host: ").append(host).append("\n");
+        ensureAuthToken();
+        if (authToken != null && !authToken.isEmpty()) {
+            msg.append("auth: Bearer ").append(maskToken(authToken)).append(" (headers written)\n");
+        } else {
+            msg.append("auth: off\n");
+        }
+        msg.append("\n");
 
         // 1) Claude Code: ~/.claude/mcp.json
         String home = System.getProperty("user.home");
@@ -295,6 +360,9 @@ public class McpService implements Plugin {
             Files.write(Paths.get(codexPath), updated.getBytes(StandardCharsets.UTF_8));
             msg.append("[OK] Codex config.toml: ").append(codexPath).append("\n");
             msg.append("     [mcp_servers.gsl5] url=http://").append(host).append(":").append(port).append("/sse\n");
+            if (authToken != null && !authToken.isEmpty()) {
+                msg.append("     http_headers.Authorization=Bearer ").append(maskToken(authToken)).append("\n");
+            }
             if (logIt) log("[MCP] Codex config.toml: " + codexPath);
         } catch (Exception ex) {
             msg.append("[FAIL] Codex config.toml: ").append(ex.getMessage()).append("\n");
@@ -320,7 +388,7 @@ public class McpService implements Plugin {
 
     /**
      * Merge gsl5 server into existing Claude-style { "mcpServers": { ... } } JSON.
-     * If parse fails, overwrite with the new minimal document.
+     * Supports nested objects (e.g. headers). If parse fails, overwrite with newDoc.
      */
     private static String mergeClaudeMcpJson(String path, String newDoc) {
         try {
@@ -328,25 +396,20 @@ public class McpService implements Plugin {
             if (!f.exists()) return newDoc;
             String old = new String(Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8);
             if (old == null || old.trim().isEmpty()) return newDoc;
-            // If already has gsl5 url block, replace that server entry; else insert.
+            String gsl5Block = extractGsl5ServerBlock(newDoc);
+            if (gsl5Block == null) return newDoc;
+            // If already has gsl5, replace that server entry using brace-depth extractor
             if (old.contains("\"gsl5\"")) {
-                // replace "gsl5": { ... } non-greedy-ish via simple strategy: rebuild using newDoc's gsl5 block
-                String gsl5Block = extractGsl5ServerBlock(newDoc);
-                if (gsl5Block == null) return newDoc;
-                String replaced = old.replaceAll(
-                        "\"gsl5\"\\s*:\\s*\\{[^}]*\\}",
-                        gsl5Block.replace("\\", "\\\\").replace("$", "\\$"));
-                // if regex failed to change, fall through
-                if (!replaced.equals(old)) return replaced;
+                String oldBlock = extractGsl5ServerBlock(old);
+                if (oldBlock != null) {
+                    return old.replace(oldBlock, gsl5Block);
+                }
             }
             // insert into mcpServers
             int idx = old.indexOf("\"mcpServers\"");
             if (idx >= 0) {
                 int brace = old.indexOf('{', idx);
                 if (brace > 0) {
-                    String gsl5Block = extractGsl5ServerBlock(newDoc);
-                    if (gsl5Block == null) return newDoc;
-                    // after '{' of mcpServers
                     String after = old.substring(brace + 1).trim();
                     boolean empty = after.startsWith("}");
                     String insert = "\n    " + gsl5Block + (empty ? "\n  " : ",\n");
@@ -380,31 +443,42 @@ public class McpService implements Plugin {
 
     private static String buildCodexToml(String host) {
         if (host == null || host.isEmpty()) host = preferredAccessHost();
-        return "[mcp_servers.gsl5]\n"
-                + "type = \"sse\"\n"
-                + "url = \"http://" + host + ":" + port + "/sse\"\n";
+        ensureAuthToken();
+        StringBuilder sb = new StringBuilder();
+        sb.append("[mcp_servers.gsl5]\n");
+        sb.append("type = \"sse\"\n");
+        sb.append("url = \"http://").append(host).append(":").append(port).append("/sse\"\n");
+        if (authToken != null && !authToken.isEmpty()) {
+            // Codex: http_headers table for SSE auth
+            sb.append("\n[mcp_servers.gsl5.http_headers]\n");
+            sb.append("Authorization = \"Bearer ").append(authToken).append("\"\n");
+        }
+        return sb.toString();
     }
 
     /**
-     * Upsert [mcp_servers.gsl5] (and ensure [mcp_servers] exists) in Codex config.toml.
+     * Upsert [mcp_servers.gsl5] (+ optional http_headers) in Codex config.toml.
      */
     private static String upsertCodexMcpServer(String existing, String host, int p) {
         if (existing == null) existing = "";
-        String block = "[mcp_servers.gsl5]\n"
-                + "type = \"sse\"\n"
-                + "url = \"http://" + host + ":" + p + "/sse\"\n";
-        // remove previous [mcp_servers.gsl5] section if present
-        String cleaned = removeTomlTable(existing, "mcp_servers.gsl5");
+        ensureAuthToken();
+        StringBuilder block = new StringBuilder();
+        block.append("[mcp_servers.gsl5]\n");
+        block.append("type = \"sse\"\n");
+        block.append("url = \"http://").append(host).append(":").append(p).append("/sse\"\n");
+        if (authToken != null && !authToken.isEmpty()) {
+            block.append("\n[mcp_servers.gsl5.http_headers]\n");
+            block.append("Authorization = \"Bearer ").append(authToken).append("\"\n");
+        }
+        // remove previous sections
+        String cleaned = removeTomlTable(existing, "mcp_servers.gsl5.http_headers");
+        cleaned = removeTomlTable(cleaned, "mcp_servers.gsl5");
         cleaned = cleaned.replaceAll("\n{3,}", "\n\n").trim();
         StringBuilder out = new StringBuilder();
         if (!cleaned.isEmpty()) {
             out.append(cleaned);
             if (!cleaned.endsWith("\n")) out.append("\n");
             out.append("\n");
-        }
-        // ensure parent table marker exists for readability (optional)
-        if (!cleaned.contains("[mcp_servers]") && !cleaned.contains("[mcp_servers.")) {
-            // Codex accepts [mcp_servers.name] without bare [mcp_servers]
         }
         out.append(block);
         if (!out.toString().endsWith("\n")) out.append("\n");
@@ -439,19 +513,27 @@ public class McpService implements Plugin {
         log("[MCP] \u670d\u52a1\u5df2\u505c\u6b62");
     }
 
-    /** headless: bind all NICs by default */
+    /** headless: loopback by default */
     public static void startHeadless(int p) {
         startHeadless(p, DEFAULT_BIND);
     }
 
     /**
      * headless start with bind host.
+     * Token: env GSL5_MCP_TOKEN > profile/mcp.token > auto-generate.
+     * Non-loopback bind requires a non-empty token.
      * @param p port
      * @param host 0.0.0.0 / 127.0.0.1 / NIC IP
      */
     public static void startHeadless(int p, String host) {
         if (p <= 0) port = DEFAULT_PORT; else port = p;
         bindHost = normalizeBindHost(host);
+        ensureAuthToken();
+        if (!isLoopbackBind(bindHost) && (authToken == null || authToken.isEmpty())) {
+            System.err.println("[MCP] Refusing non-loopback bind without token. Set GSL5_MCP_TOKEN or create profile/mcp.token");
+            System.exit(2);
+            return;
+        }
         System.setProperty("java.awt.headless", "true"); // \u7981\u6b62 AWT \u5f39\u7a97\uff0c\u9632\u6b62 GOptionPane \u963b\u585e MCP
         try {
             server = HttpServer.create(new InetSocketAddress(java.net.InetAddress.getByName(bindHost), port), 0);
@@ -459,18 +541,18 @@ public class McpService implements Plugin {
             McpService dummy = new McpService();
             server.createContext("/sse", dummy.new SseHandler());
             server.createContext("/message", dummy.new MessageHandler());
-            server.createContext("/health", (ex) -> {
-                try { sendJson(ex, 200, j("status","ok","running",true,"port",port,"bind",bindHost,"urls",listAccessUrls())); } catch (IOException ignored) {}
-            });
+            server.createContext("/health", dummy.new HealthHandler());
             server.createContext("/config", dummy.new ConfigHandler());
             server.start();
             running = true;
             String primary = preferredAccessHost();
-            Log.log("[MCP] Headless bind=" + bindHost + ":" + port);
+            Log.log("[MCP] Headless bind=" + bindHost + ":" + port + " auth=" + maskToken(authToken));
             System.out.println("[MCP] Headless bind=" + bindHost + ":" + port);
+            System.out.println("[MCP] Auth: Bearer " + maskToken(authToken) + " (full token in " + tokenFilePath() + " or env " + TOKEN_ENV + ")");
             System.out.println("[MCP] Access URLs:");
             for (String u : listAccessUrls()) System.out.println("  " + u);
             System.out.println("[MCP] Recommended SSE: http://" + primary + ":" + port + "/sse");
+            System.out.println("[MCP] Header required: Authorization: Bearer <token>");
             Runtime.getRuntime().addShutdownHook(new Thread(() -> {
                 if (server != null) { server.stop(0); running = false; }
                 System.out.println("[MCP] Server stopped.");
@@ -546,14 +628,25 @@ public class McpService implements Plugin {
 
     private static String buildMcpJson(String host) {
         if (host == null || host.isEmpty()) host = preferredAccessHost();
-        return "{\n" +
-                "  \"mcpServers\": {\n" +
-                "    \"gsl5\": {\n" +
-                "      \"type\": \"sse\",\n" +
-                "      \"url\": \"http://" + host + ":" + port + "/sse\"\n" +
-                "    }\n" +
-                "  }\n" +
-                "}";
+        ensureAuthToken();
+        StringBuilder sb = new StringBuilder();
+        sb.append("{\n");
+        sb.append("  \"mcpServers\": {\n");
+        sb.append("    \"gsl5\": {\n");
+        sb.append("      \"type\": \"sse\",\n");
+        sb.append("      \"url\": \"http://").append(host).append(":").append(port).append("/sse\"");
+        if (authToken != null && !authToken.isEmpty()) {
+            sb.append(",\n");
+            sb.append("      \"headers\": {\n");
+            sb.append("        \"Authorization\": \"Bearer ").append(esc(authToken)).append("\"\n");
+            sb.append("      }\n");
+        } else {
+            sb.append("\n");
+        }
+        sb.append("    }\n");
+        sb.append("  }\n");
+        sb.append("}");
+        return sb.toString();
     }
 
     /** Resolve public endpoint host from request Host header (supports NIC IP access). */
@@ -598,12 +691,178 @@ public class McpService implements Plugin {
 
     private void log(String msg) {
         Log.log(msg);
-        SwingUtilities.invokeLater(() -> logArea.append(msg + "\n"));
+        if (logArea != null) {
+            SwingUtilities.invokeLater(() -> logArea.append(msg + "\n"));
+        }
+    }
+
+    // ==================== Auth (Bearer Token) ====================
+
+    private static String tokenFilePath() {
+        File profileDir = new File("profile");
+        if (!profileDir.exists()) {
+            try { profileDir.mkdirs(); } catch (Exception ignored) {}
+        }
+        return new File(profileDir, TOKEN_FILE_NAME).getPath();
+    }
+
+    /** Load token: env GSL5_MCP_TOKEN > profile/mcp.token > auto-generate+persist. */
+    private static synchronized void ensureAuthToken() {
+        if (authToken != null && !authToken.trim().isEmpty()) return;
+        String env = System.getenv(TOKEN_ENV);
+        if (env != null && !env.trim().isEmpty()) {
+            authToken = env.trim();
+            return;
+        }
+        try {
+            File f = new File(tokenFilePath());
+            if (f.isFile() && f.length() > 0) {
+                String t = new String(Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8).trim();
+                // first line only
+                int nl = t.indexOf('\n');
+                if (nl >= 0) t = t.substring(0, nl).trim();
+                if (!t.isEmpty()) {
+                    authToken = t;
+                    return;
+                }
+            }
+        } catch (Exception ignored) {}
+        String t = generateToken();
+        setAuthToken(t, true);
+    }
+
+    private static synchronized void setAuthToken(String token, boolean persist) {
+        authToken = token == null ? "" : token.trim();
+        if (persist && authToken != null && !authToken.isEmpty()) {
+            try {
+                File f = new File(tokenFilePath());
+                File parent = f.getParentFile();
+                if (parent != null && !parent.exists()) parent.mkdirs();
+                Files.write(f.toPath(), (authToken + "\n").getBytes(StandardCharsets.UTF_8));
+            } catch (Exception e) {
+                Log.log("[MCP] Failed to save token: " + e.getMessage());
+            }
+        }
+    }
+
+    private static String generateToken() {
+        byte[] buf = new byte[24];
+        new java.security.SecureRandom().nextBytes(buf);
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(buf);
+    }
+
+    private static String maskToken(String t) {
+        if (t == null || t.isEmpty()) return "(empty)";
+        if (t.length() <= 8) return "****";
+        return t.substring(0, 4) + "..." + t.substring(t.length() - 4);
+    }
+
+    private static boolean isLoopbackBind(String host) {
+        if (host == null) return false;
+        String h = host.trim();
+        return "127.0.0.1".equals(h) || "localhost".equalsIgnoreCase(h) || "::1".equals(h);
+    }
+
+    /**
+     * Extract Bearer token from Authorization header, or X-MCP-Token / ?token= query.
+     */
+    private static String extractRequestToken(HttpExchange ex) {
+        try {
+            java.util.List<String> auths = ex.getRequestHeaders().get("Authorization");
+            if (auths != null) {
+                for (String a : auths) {
+                    if (a == null) continue;
+                    String s = a.trim();
+                    if (s.regionMatches(true, 0, "Bearer ", 0, 7)) {
+                        return s.substring(7).trim();
+                    }
+                }
+            }
+            java.util.List<String> xt = ex.getRequestHeaders().get("X-MCP-Token");
+            if (xt != null && !xt.isEmpty() && xt.get(0) != null) {
+                return xt.get(0).trim();
+            }
+            // query ?token=
+            String uri = ex.getRequestURI() != null ? ex.getRequestURI().getRawQuery() : null;
+            if (uri != null) {
+                for (String part : uri.split("&")) {
+                    int eq = part.indexOf('=');
+                    if (eq > 0 && "token".equalsIgnoreCase(part.substring(0, eq))) {
+                        return java.net.URLDecoder.decode(part.substring(eq + 1), "UTF-8");
+                    }
+                }
+            }
+        } catch (Exception ignored) {}
+        return null;
+    }
+
+    private static boolean constantTimeEquals(String a, String b) {
+        if (a == null || b == null) return false;
+        byte[] x = a.getBytes(StandardCharsets.UTF_8);
+        byte[] y = b.getBytes(StandardCharsets.UTF_8);
+        if (x.length != y.length) {
+            // still compare to reduce timing leak on length
+            int r = 0;
+            for (int i = 0; i < x.length; i++) r |= x[i] ^ (i < y.length ? y[i] : 0);
+            return false;
+        }
+        int r = 0;
+        for (int i = 0; i < x.length; i++) r |= x[i] ^ y[i];
+        return r == 0;
+    }
+
+    /** @return true if authorized; false after 401 already sent */
+    private static boolean requireAuth(HttpExchange ex) throws IOException {
+        ensureAuthToken();
+        if (authToken == null || authToken.isEmpty()) {
+            // loopback-only mode without token: still require loopback client
+            if (isLoopbackClient(ex) && isLoopbackBind(bindHost)) {
+                return true;
+            }
+            sendUnauthorized(ex, "MCP token not configured; set GSL5_MCP_TOKEN or profile/mcp.token");
+            return false;
+        }
+        String provided = extractRequestToken(ex);
+        if (provided != null && constantTimeEquals(provided, authToken)) {
+            return true;
+        }
+        sendUnauthorized(ex, "Unauthorized: provide Authorization: Bearer <token>");
+        return false;
+    }
+
+    private static boolean isLoopbackClient(HttpExchange ex) {
+        try {
+            java.net.InetSocketAddress ra = ex.getRemoteAddress();
+            if (ra != null && ra.getAddress() != null) {
+                return ra.getAddress().isLoopbackAddress();
+            }
+        } catch (Exception ignored) {}
+        return false;
+    }
+
+    private static void sendUnauthorized(HttpExchange ex, String msg) throws IOException {
+        String json = j("error", "unauthorized", "message", msg);
+        byte[] bytes = json.getBytes(StandardCharsets.UTF_8);
+        ex.getResponseHeaders().set("Content-Type", "application/json; charset=utf-8");
+        ex.getResponseHeaders().set("WWW-Authenticate", "Bearer realm=\"gsl5-mcp\"");
+        ex.sendResponseHeaders(401, bytes.length);
+        try {
+            ex.getResponseBody().write(bytes);
+            ex.getResponseBody().close();
+        } catch (Exception ignored) {}
     }
 
     // ==================== SSE ====================
     class SseHandler implements HttpHandler {
         public void handle(HttpExchange ex) throws IOException {
+            if ("OPTIONS".equalsIgnoreCase(ex.getRequestMethod())) {
+                ex.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
+                ex.getResponseHeaders().set("Access-Control-Allow-Methods", "GET, OPTIONS");
+                ex.getResponseHeaders().set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-MCP-Token");
+                ex.sendResponseHeaders(204, -1);
+                return;
+            }
+            if (!requireAuth(ex)) return;
             ex.getResponseHeaders().set("Content-Type", "text/event-stream");
             ex.getResponseHeaders().set("Cache-Control", "no-cache");
             ex.getResponseHeaders().set("Connection", "keep-alive");
@@ -630,9 +889,10 @@ public class McpService implements Plugin {
             if ("OPTIONS".equalsIgnoreCase(ex.getRequestMethod())) {
                 ex.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
                 ex.getResponseHeaders().set("Access-Control-Allow-Methods", "POST, GET, OPTIONS");
-                ex.getResponseHeaders().set("Access-Control-Allow-Headers", "Content-Type");
+                ex.getResponseHeaders().set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-MCP-Token");
                 ex.sendResponseHeaders(204, -1); return;
             }
+            if (!requireAuth(ex)) return;
             byte[] bodyBytes = functions.readInputStream(ex.getRequestBody());
             String body = new String(bodyBytes, StandardCharsets.UTF_8);
             ex.getResponseHeaders().set("Content-Type", "application/json");
@@ -652,6 +912,25 @@ public class McpService implements Plugin {
             } catch (Exception e) {
                 sendJson(ex, 200, j("jsonrpc","2.0","id",null,"error",m("code",-32603,"message",e.getMessage())));
             }
+        }
+    }
+
+    class HealthHandler implements HttpHandler {
+        public void handle(HttpExchange ex) throws IOException {
+            if ("OPTIONS".equalsIgnoreCase(ex.getRequestMethod())) {
+                ex.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
+                ex.getResponseHeaders().set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-MCP-Token");
+                ex.sendResponseHeaders(204, -1);
+                return;
+            }
+            if (!requireAuth(ex)) return;
+            sendJson(ex, 200, j(
+                    "status", "ok",
+                    "running", true,
+                    "port", port,
+                    "bind", bindHost,
+                    "auth", (authToken != null && !authToken.isEmpty()) ? "token" : "off",
+                    "urls", listAccessUrls()));
         }
     }
 
@@ -1872,10 +2151,13 @@ public class McpService implements Plugin {
 
     private String mcpStatus(Map<String, Object> a) {
         int shellCount = Db.getAllShell().size() - 1;
+        ensureAuthToken();
         StringBuilder sb = new StringBuilder();
         sb.append("GSL5 MCP Server\n");
         sb.append("  \u72b6\u6001: ").append(running ? "\u8fd0\u884c\u4e2d" : "\u5df2\u505c\u6b62").append("\n");
         sb.append("  \u7ed1\u5b9a: ").append(bindHost).append(":").append(port).append("\n");
+        sb.append("  Auth: ").append(authToken != null && !authToken.isEmpty() ? ("token " + maskToken(authToken)) : "off").append("\n");
+        sb.append("  Header: Authorization: Bearer <token>\n");
         sb.append("  \u63a8\u8350: http://").append(preferredAccessHost()).append(":").append(port).append("/sse\n");
         sb.append("  \u53ef\u8bbf\u95ee:\n");
         for (String u : listAccessUrls()) sb.append("    ").append(u).append("/sse\n");
@@ -1903,10 +2185,12 @@ public class McpService implements Plugin {
                 doWrite = "1".equals(w) || "true".equals(w) || "yes".equals(w) || "on".equals(w);
             }
         }
+        ensureAuthToken();
         StringBuilder extra = new StringBuilder();
         extra.append("bind=").append(bindHost).append(":").append(port).append("\n");
         extra.append("config host=").append(host).append("\n");
         extra.append("client=").append(client).append("\n");
+        extra.append("auth=").append(authToken != null && !authToken.isEmpty() ? ("token " + maskToken(authToken)) : "off").append("\n");
         extra.append("all access URLs:\n");
         for (String u : listAccessUrls()) extra.append("  ").append(u).append("/sse\n");
         extra.append("\n");
@@ -1948,7 +2232,13 @@ public class McpService implements Plugin {
     }
     class ConfigHandler implements HttpHandler {
         public void handle(HttpExchange ex) throws IOException {
-            if ("OPTIONS".equals(ex.getRequestMethod())) { sendJson(ex, 200, "{}"); return; }
+            if ("OPTIONS".equals(ex.getRequestMethod())) {
+                ex.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
+                ex.getResponseHeaders().set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-MCP-Token");
+                sendJson(ex, 200, "{}");
+                return;
+            }
+            if (!requireAuth(ex)) return;
             if ("GET".equals(ex.getRequestMethod())) {
                 String content = configRead(null);
                 sendJson(ex, 200, j("content", content));
