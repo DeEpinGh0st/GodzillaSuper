@@ -1439,7 +1439,7 @@ public class MainActivity extends JFrame {
             // Headless mode: must be set BEFORE any AWT/Swing class loading, or Linux headless env will NPE on Font
             System.setProperty("java.awt.headless", "true");
             int p = 9123;
-            String bindHost = "127.0.0.1"; // safe default; use 0.0.0.0 only when intentional
+            String bindHost = "0.0.0.0";
             // args: mcp [port] [bindHost]
             // also: mcp 0.0.0.0:9123  or  mcp 192.168.1.10:9123
             // auth: env GSL5_MCP_TOKEN or profile/mcp.token (auto-generated)

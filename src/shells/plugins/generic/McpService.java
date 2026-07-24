@@ -52,8 +52,8 @@ import util.functions;
 public class McpService implements Plugin {
 
     private static final int DEFAULT_PORT = 9123;
-    /** Safe default: loopback only. Use 0.0.0.0 only when intentionally exposing. */
-    private static final String DEFAULT_BIND = "127.0.0.1";
+    /** Default bind: all interfaces. Token auth protects access; no token = 401. */
+    private static final String DEFAULT_BIND = "0.0.0.0";
     private static final String TOKEN_ENV = "GSL5_MCP_TOKEN";
     private static final String TOKEN_FILE_NAME = "mcp.token";
     private static HttpServer server;
@@ -89,7 +89,7 @@ public class McpService implements Plugin {
         JPanel row1 = new JPanel();
         row1.add(new JLabel("\u7ed1\u5b9a:"));
         hostField = new JTextField(DEFAULT_BIND, 12);
-        hostField.setToolTipText("127.0.0.1=\u4ec5\u672c\u673a  0.0.0.0=\u5168\u7f51\u5361  \u6216\u586b\u7f51\u5361IP\uff08\u975e\u672c\u673a\u5fc5\u987b\u914d Token\uff09");
+        hostField.setToolTipText("0.0.0.0=\u5168\u7f51\u5361  127.0.0.1=\u4ec5\u672c\u673a  \u6216\u586b\u7f51\u5361IP\uff08Token\u5df2\u4fdd\u62a4\uff09");
         row1.add(hostField);
         row1.add(new JLabel("\u7aef\u53e3:"));
         portField = new JTextField(String.valueOf(DEFAULT_PORT), 6);
@@ -513,7 +513,7 @@ public class McpService implements Plugin {
         log("[MCP] \u670d\u52a1\u5df2\u505c\u6b62");
     }
 
-    /** headless: loopback by default */
+    /** headless: all interfaces by default */
     public static void startHeadless(int p) {
         startHeadless(p, DEFAULT_BIND);
     }
