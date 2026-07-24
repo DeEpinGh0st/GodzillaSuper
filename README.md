@@ -8,6 +8,11 @@
 
 ## 更新日志
 
+### 3.1.4（2026-07-24）
+- 菜单「赞助」改为「更新」，新增「检查更新」
+- 点击检查 GitHub 最新 Release，不是最新版提示跳转下载
+- 启动时自动静默检查，有新版才弹窗
+
 ### 3.1.3（2026-07-24）
 - **MCP Bearer Token 鉴权**：`/sse` `/message` `/health` `/config` 全路由鉴权，非本机绑定无 Token 拒绝启动
 - **CLI 自动写配置**：`java -jar gsl5.jar mcp` 启动后自动写入 Claude Code + Codex 配置（含 Authorization header）
@@ -168,7 +173,8 @@ java -jar bin/gsl5.jar mcp 192.168.1.10:9123
 然后在 Claude / Codex 的 MCP 配置中添加（详见 [MCP 服务](#mcp-服务ai-操控)）。
 
 ### 4. 下载预编译 Release
-- **3.1.3（最新）**：MCP Token 鉴权 + CLI 自动写配置 + Linux headless 修复 — [Release](https://github.com/Xaaaa-bip/GodzillaSuper/releases/tag/3.1.3) · [jar](https://github.com/Xaaaa-bip/GodzillaSuper/releases/download/3.1.3/gsl5.jar)
+- **3.1.4（最新）**：检查更新 + 菜单优化 — [Release](https://github.com/Xaaaa-bip/GodzillaSuper/releases/tag/3.1.4) · [jar](https://github.com/Xaaaa-bip/GodzillaSuper/releases/download/3.1.4/gsl5.jar)
+- **3.1.3**：MCP Token 鉴权 + CLI 自动写配置 + Linux headless 修复 — [Release](https://github.com/Xaaaa-bip/GodzillaSuper/releases/tag/3.1.3) · [jar](https://github.com/Xaaaa-bip/GodzillaSuper/releases/download/3.1.3/gsl5.jar)
 - **3.1.2**：RASP 绕过全链路 — [Release](https://github.com/Xaaaa-bip/GodzillaSuper/releases/tag/3.1.2) · [jar](https://github.com/Xaaaa-bip/GodzillaSuper/releases/download/3.1.2/gsl5.jar)
 - **3.1.1**：PHP 免杀 0KB 修复 — [Release](https://github.com/Xaaaa-bip/GodzillaSuper/releases/tag/3.1.1) · [jar](https://github.com/Xaaaa-bip/GodzillaSuper/releases/download/3.1.1/gsl5.jar)
 - **3.1.0**：NetCore + 全局 MCP — [Release](https://github.com/Xaaaa-bip/GodzillaSuper/releases/tag/3.1.0) · [jar](https://github.com/Xaaaa-bip/GodzillaSuper/releases/download/3.1.0/gsl5.jar)
