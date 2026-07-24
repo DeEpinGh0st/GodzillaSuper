@@ -6,6 +6,27 @@
 
 <img width="676" height="841" alt="image" src="https://github.com/user-attachments/assets/69ee0f77-f286-4cc3-a670-04d2fc221f80" />
 
+## 更新日志
+
+### 3.1.3（2026-07-24）
+- **MCP Bearer Token 鉴权**：`/sse` `/message` `/health` `/config` 全路由鉴权，非本机绑定无 Token 拒绝启动
+- **CLI 自动写配置**：`java -jar gsl5.jar mcp` 启动后自动写入 Claude Code + Codex 配置（含 Authorization header）
+- **CLI 显式 Token**：命令行直接打印完整 Bearer Token，无需去文件里找
+- **Linux headless 修复**：无 GUI 环境不再报 Font NPE
+
+### 3.1.2（2026-07-17）
+- RASP 绕过全链路：Detect→Plan→Exec→Verify 管线
+- OpenRASP 深软关、命令回显修复、Shell 加载遮罩竞态修复
+- JNI 自动加载、Win x64 DLL 内置
+
+### 3.1.1（2026-07-17）
+- PHP 免杀模板 0KB 修复
+
+### 3.1.0（2026-07-15）
+- NetCore 动态载荷 + 全局 MCP Claude/Codex 配置
+
+---
+
 
 
 
@@ -147,12 +168,10 @@ java -jar bin/gsl5.jar mcp 192.168.1.10:9123
 然后在 Claude / Codex 的 MCP 配置中添加（详见 [MCP 服务](#mcp-服务ai-操控)）。
 
 ### 4. 下载预编译 Release
-- **3.1.3（最新）**：https://github.com/Xaaaa-bip/GodzillaSuper/releases/tag/3.1.3
-- jar：https://github.com/Xaaaa-bip/GodzillaSuper/releases/download/3.1.3/gsl5.jar
-- **3.1.2**：https://github.com/Xaaaa-bip/GodzillaSuper/releases/tag/3.1.2
-- **3.1.1**：https://github.com/Xaaaa-bip/GodzillaSuper/releases/tag/3.1.1
-- **3.1.0**：https://github.com/Xaaaa-bip/GodzillaSuper/releases/tag/3.1.0
-- **3.0**：https://github.com/Xaaaa-bip/GodzillaSuper/releases/tag/3.0
+- **3.1.3（最新）**：MCP Token 鉴权 + CLI 自动写配置 + Linux headless 修复 — [Release](https://github.com/Xaaaa-bip/GodzillaSuper/releases/tag/3.1.3) · [jar](https://github.com/Xaaaa-bip/GodzillaSuper/releases/download/3.1.3/gsl5.jar)
+- **3.1.2**：RASP 绕过全链路 — [Release](https://github.com/Xaaaa-bip/GodzillaSuper/releases/tag/3.1.2) · [jar](https://github.com/Xaaaa-bip/GodzillaSuper/releases/download/3.1.2/gsl5.jar)
+- **3.1.1**：PHP 免杀 0KB 修复 — [Release](https://github.com/Xaaaa-bip/GodzillaSuper/releases/tag/3.1.1) · [jar](https://github.com/Xaaaa-bip/GodzillaSuper/releases/download/3.1.1/gsl5.jar)
+- **3.1.0**：NetCore + 全局 MCP — [Release](https://github.com/Xaaaa-bip/GodzillaSuper/releases/tag/3.1.0) · [jar](https://github.com/Xaaaa-bip/GodzillaSuper/releases/download/3.1.0/gsl5.jar)
 
 ---
 
