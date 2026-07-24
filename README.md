@@ -4,7 +4,8 @@
 
 
 
-<img width="676" height="841" alt="image" src="https://github.com/user-attachments/assets/69ee0f77-f286-4cc3-a670-04d2fc221f80" />
+<img width="1031" height="1449" alt="788c665a1c96c4e9e80b8ef0ebd59b56" src="https://github.com/user-attachments/assets/77ae4f3a-fd6d-4886-b199-b6120b49f6bf" />
+
 
 ## 更新日志
 
