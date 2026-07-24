@@ -552,7 +552,11 @@ public class McpService implements Plugin {
             System.out.println("[MCP] Access URLs:");
             for (String u : listAccessUrls()) System.out.println("  " + u);
             System.out.println("[MCP] Recommended SSE: http://" + primary + ":" + port + "/sse");
-            System.out.println("[MCP] Header required: Authorization: Bearer <token>");
+            System.out.println("[MCP] Header required: Authorization: Bearer " + authToken);
+            // Auto-write Claude + Codex client configs
+            System.out.println("\n[MCP] Writing client configs...");
+            System.out.print(dummy.doWriteClaudeConfigs(true));
+            System.out.print(dummy.doWriteCodexConfig(true));
             Runtime.getRuntime().addShutdownHook(new Thread(() -> {
                 if (server != null) { server.stop(0); running = false; }
                 System.out.println("[MCP] Server stopped.");
