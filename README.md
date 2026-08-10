@@ -14,6 +14,11 @@
 - 修复 PHP 混淆乱码：模板生成/输出统一 UTF-8 编码（PhpConstInclude / PhpConstEval / PhpNone / Generate）
 - 修复 DisplayName 中文乱码：PHP 全版本常量文件包含（include_once）、PHP 全版本常量解密绕过（eval）
 - 连带修复 JSP/C# 处理器乱码：JSP/JSPX 超级混淆、无
+- **MCP 插件工具**：`@McpTool` 注解机制，插件方法声明即被 MCP 扫描导入为工具（tools/list 自动列出、按 Shell 载荷类型分发）
+  - `plugin_NewCmd_exec` 命令执行 · `plugin_OaTools_proxy` OA 信息提取（8 目标）· `plugin_Useradd_adduser` 添加 Windows 用户
+  - `plugin_Mimikatz_run` 凭据提取（提权模式下自动以 SYSTEM 执行）· `plugin_TH_TOOLS_exec` 提权框架（6 个 Potato）· `plugin_EfsPotato_run` EfsPotato 提权 · `plugin_ShellAvscanPlugin_scan` 杀软识别
+- **TH_TOOLS 无 GUI 化**：大文件分片上传替代 GUI 组件，MCP 下完整支持提权链
+- 修复杀软识别名称乱码（isMessyCode 误判导致 GBK 破坏性转换）
 
 ### 3.1.4（2026-07-24）
 - 菜单「赞助」改为「更新」，新增「检查更新」
@@ -180,7 +185,7 @@ java -jar bin/gsl5.jar mcp 192.168.1.10:9123
 然后在 Claude / Codex 的 MCP 配置中添加（详见 [MCP 服务](#mcp-服务ai-操控)）。
 
 ### 4. 下载预编译 Release
-- **3.1.5（最新）**：PHP 混淆乱码修复 + UTF-8 统一 — [Release](https://github.com/Xaaaa-bip/GodzillaSuper/releases/tag/3.1.5) · [jar](https://github.com/Xaaaa-bip/GodzillaSuper/releases/download/3.1.5/gsl5.jar)
+- **3.1.5（最新）**：PHP 混淆乱码修复 + MCP 插件工具（@McpTool 7 个工具 + TH_TOOLS 无 GUI 提权链）— [Release](https://github.com/Xaaaa-bip/GodzillaSuper/releases/tag/3.1.5) · [jar](https://github.com/Xaaaa-bip/GodzillaSuper/releases/download/3.1.5/gsl5.jar)
 - **3.1.4**：检查更新 + 菜单优化 — [Release](https://github.com/Xaaaa-bip/GodzillaSuper/releases/tag/3.1.4) · [jar](https://github.com/Xaaaa-bip/GodzillaSuper/releases/download/3.1.4/gsl5.jar)
 - **3.1.3**：MCP Token 鉴权 + CLI 自动写配置 + Linux headless 修复 — [Release](https://github.com/Xaaaa-bip/GodzillaSuper/releases/tag/3.1.3) · [jar](https://github.com/Xaaaa-bip/GodzillaSuper/releases/download/3.1.3/gsl5.jar)
 - **3.1.2**：RASP 绕过全链路 — [Release](https://github.com/Xaaaa-bip/GodzillaSuper/releases/tag/3.1.2) · [jar](https://github.com/Xaaaa-bip/GodzillaSuper/releases/download/3.1.2/gsl5.jar)
