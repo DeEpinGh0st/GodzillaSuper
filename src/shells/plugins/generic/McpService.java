@@ -1964,9 +1964,79 @@ public class McpService implements Plugin {
         Payload pl = sh.getPayloadModule();
         String info = pl.getBasicsInfo();
         String enc = safeEncoding(sh.getEncoding());
-        if (info == null || info.isEmpty()) return "(empty) encoding=" + enc;
-        // \u5728\u7ed3\u679c\u9996\u884c\u9644\u5e26\u5f53\u524d encoding\uff0c\u4fbf\u4e8e\u786e\u8ba4\u662f\u5426\u81ea\u52a8\u5e26\u4e0a
-        return "encoding: " + enc + "\n" + info;
+        StringBuilder sb = new StringBuilder();
+        // \u4eff GUI \u8fde\u63a5\u9762\u677f\u7ed3\u6784\u5316\u8f93\u51fa (\u6838\u5fc3 8 \u9879)
+        sb.append("URL: ").append(sh.getUrl() == null ? "" : sh.getUrl()).append("\n");
+        sb.append("\u4e3b\u673a\u540d: ").append(basicInfoValue(info, "COMPUTERNAME")).append("\n");
+        sb.append("\u7528\u6237: ").append(basicInfoValue(info, "CurrentUser")).append("\n");
+        String iplist = basicInfoValue(info, "IPList");
+        String ip = firstIpv4(iplist);
+        sb.append("IP: ").append(ip.isEmpty() ? iplist : ip).append(iplist.isEmpty() ? "" : " (\u5168\u91cf: " + iplist + ")").append("\n");
+        sb.append("OS: ").append(osName(basicInfoValue(info, "OsInfo"))).append("\n");
+        String real = basicInfoValue(info, "RealFile");
+        if (real.isEmpty()) real = pl.currentDir();
+        sb.append("Webshell \u8def\u5f84: ").append(real).append("\n");
+        sb.append("Shell \u7c7b\u578b: ").append(sh.getPayload()).append(" + ").append(sh.getCryption()).append("\n");
+        String key = sh.getSecretKey();
+        sb.append("AES Key: ").append(key == null ? "" : key).append("\n");
+        sb.append("\u5bc6\u7801: ").append(sh.getPassword() == null ? "" : sh.getPassword()).append("\n");
+        sb.append("encoding: ").append(enc).append("\n");
+        // \u7cfb\u7edf\u5173\u952e\u4fe1\u606f (basicsInfo \u63d0\u53d6)
+        sb.append("\u6587\u4ef6\u7cfb\u7edf\u6839: ").append(basicInfoValue(info, "FileRoot")).append("\n");
+        sb.append("\u5f53\u524d\u76ee\u5f55: ").append(basicInfoValue(info, "CurrentDir")).append("\n");
+        sb.append("\u4e34\u65f6\u76ee\u5f55: ").append(basicInfoValue(info, "TempDirectory")).append("\n");
+        sb.append("\u8fdb\u7a0b\u67b6\u6784: ").append(basicInfoValue(info, "ProcessArch")).append("\n");
+        sb.append("\u7cfb\u7edf\u4fe1\u606f: ").append(basicInfoValue(info, "OsInfo")).append("\n");
+        sb.append("\u73af\u5883\u53d8\u91cf USERDOMAIN: ").append(basicInfoValue(info, "USERDOMAIN")).append("\n");
+        sb.append("\u73af\u5883\u53d8\u91cf LOGONSERVER: ").append(basicInfoValue(info, "LOGONSERVER")).append("\n");
+        sb.append("\u73af\u5883\u53d8\u91cf windir: ").append(basicInfoValue(info, "windir")).append("\n");
+        sb.append("JAVA_HOME(java.home): ").append(basicInfoValue(info, "java.home")).append("\n");
+        sb.append("JDK \u7248\u672c(java.version): ").append(basicInfoValue(info, "java.version")).append("\n");
+        if (info == null || info.isEmpty()) return sb.toString() + " | (basicsInfo empty)";
+        return sb.toString();
+    }
+
+    /** \u4ece basicsInfo (\u7cfb\u7edf\u5c5e\u6027\u5168\u91cf) \u63d0\u53d6\u67d0\u4e2a key \u7684\u503c */
+    private static String basicInfoValue(String info, String key) {
+        if (info == null) return "";
+        String prefix = key + " : ";
+        int i = info.indexOf(prefix);
+        if (i < 0) { prefix = key + ":"; i = info.indexOf(prefix); }
+        if (i < 0) return "";
+        int start = i + prefix.length();
+        int end = info.indexOf("\n", start);
+        String v = (end < 0 ? info.substring(start) : info.substring(start, end)).trim();
+        return v;
+    }
+
+    /** IPList \u91cc\u53d6\u7b2c\u4e00\u4e2a IPv4 (ipv6 \u548c %scope \u6392\u9664) */
+    private static String firstIpv4(String iplist) {
+        if (iplist == null || iplist.isEmpty()) return "";
+        for (String p : iplist.split(",")) {
+            String t = p.trim();
+            if (t.matches("\\d{1,3}(\\.\\d{1,3}){3}")) return t;
+        }
+        return "";
+    }
+
+    /** OsInfo (\u4f8b: os.name: Windows 11 os.version: 10.0 os.arch: amd64) \u7b80\u5316\u4e3a\u53ef\u8bfb\u540d */
+    private static String osName(String osInfo) {
+        if (osInfo == null || osInfo.isEmpty()) return "";
+        String name = "";
+        String ver = "";
+        int ni = osInfo.indexOf("os.name:");
+        if (ni >= 0) {
+            String tail = osInfo.substring(ni + 8).trim();
+            int next = tail.indexOf("os.");
+            name = (next < 0 ? tail : tail.substring(0, next)).trim();
+        }
+        int vi = osInfo.indexOf("os.version:");
+        if (vi >= 0) {
+            String tail = osInfo.substring(vi + 11).trim();
+            int next = tail.indexOf("os.");
+            ver = (next < 0 ? tail : tail.substring(0, next)).trim();
+        }
+        return ver.isEmpty() ? name : name + " (" + ver + ")";
     }
 
     private String shellTest(Map<String, Object> a) {
