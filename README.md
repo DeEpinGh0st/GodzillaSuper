@@ -3,8 +3,9 @@
 ##BUG反馈群
 
 
+<img width="1031" height="1449" alt="7c6b91de19a2d3d70cc36149cbda8d67" src="https://github.com/user-attachments/assets/e953b406-bb79-41ed-b99d-d98a43d49c8a" />
 
-<img width="1031" height="1449" alt="788c665a1c96c4e9e80b8ef0ebd59b56" src="https://github.com/user-attachments/assets/77ae4f3a-fd6d-4886-b199-b6120b49f6bf" />
+
 
 
 ## 更新日志
