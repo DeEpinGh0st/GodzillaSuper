@@ -9,6 +9,11 @@
 
 ## 更新日志
 
+### 3.1.5（2026-08-10）
+- 修复 PHP 混淆乱码：模板生成/输出统一 UTF-8 编码（PhpConstInclude / PhpConstEval / PhpNone / Generate）
+- 修复 DisplayName 中文乱码：PHP 全版本常量文件包含（include_once）、PHP 全版本常量解密绕过（eval）
+- 连带修复 JSP/C# 处理器乱码：JSP/JSPX 超级混淆、无
+
 ### 3.1.4（2026-07-24）
 - 菜单「赞助」改为「更新」，新增「检查更新」
 - 点击检查 GitHub 最新 Release，不是最新版提示跳转下载
@@ -174,7 +179,8 @@ java -jar bin/gsl5.jar mcp 192.168.1.10:9123
 然后在 Claude / Codex 的 MCP 配置中添加（详见 [MCP 服务](#mcp-服务ai-操控)）。
 
 ### 4. 下载预编译 Release
-- **3.1.4（最新）**：检查更新 + 菜单优化 — [Release](https://github.com/Xaaaa-bip/GodzillaSuper/releases/tag/3.1.4) · [jar](https://github.com/Xaaaa-bip/GodzillaSuper/releases/download/3.1.4/gsl5.jar)
+- **3.1.5（最新）**：PHP 混淆乱码修复 + UTF-8 统一 — [Release](https://github.com/Xaaaa-bip/GodzillaSuper/releases/tag/3.1.5) · [jar](https://github.com/Xaaaa-bip/GodzillaSuper/releases/download/3.1.5/gsl5.jar)
+- **3.1.4**：检查更新 + 菜单优化 — [Release](https://github.com/Xaaaa-bip/GodzillaSuper/releases/tag/3.1.4) · [jar](https://github.com/Xaaaa-bip/GodzillaSuper/releases/download/3.1.4/gsl5.jar)
 - **3.1.3**：MCP Token 鉴权 + CLI 自动写配置 + Linux headless 修复 — [Release](https://github.com/Xaaaa-bip/GodzillaSuper/releases/tag/3.1.3) · [jar](https://github.com/Xaaaa-bip/GodzillaSuper/releases/download/3.1.3/gsl5.jar)
 - **3.1.2**：RASP 绕过全链路 — [Release](https://github.com/Xaaaa-bip/GodzillaSuper/releases/tag/3.1.2) · [jar](https://github.com/Xaaaa-bip/GodzillaSuper/releases/download/3.1.2/gsl5.jar)
 - **3.1.1**：PHP 免杀 0KB 修复 — [Release](https://github.com/Xaaaa-bip/GodzillaSuper/releases/tag/3.1.1) · [jar](https://github.com/Xaaaa-bip/GodzillaSuper/releases/download/3.1.1/gsl5.jar)
