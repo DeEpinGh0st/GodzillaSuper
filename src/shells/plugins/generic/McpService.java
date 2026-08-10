@@ -8,6 +8,10 @@ import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
 import core.ApplicationContext;
 import core.Db;
+import core.annotation.McpParam;
+import core.annotation.McpTool;
+import core.annotation.PayloadAnnotation;
+import core.annotation.PluginAnnotation;
 import core.imp.Payload;
 import core.imp.Plugin;
 import core.shell.ShellEntity;
@@ -1139,6 +1143,193 @@ public class McpService implements Plugin {
         }
     }
 
+    // ==================== PLUGIN TOOLS (scanned @McpTool) ====================
+    private static final java.util.List<PluginToolInfo> PLUGIN_TOOLS = new java.util.ArrayList<>();
+    private static volatile boolean pluginToolsScanned = false;
+
+    private static class PluginToolInfo {
+        final String name;
+        final Class<?> pluginClass;
+        final String payloadName;
+        final java.lang.reflect.Method method;
+        final McpTool ann;
+        PluginToolInfo(String name, Class<?> pluginClass, String payloadName,
+                       java.lang.reflect.Method method, McpTool ann) {
+            this.name = name; this.pluginClass = pluginClass; this.payloadName = payloadName;
+            this.method = method; this.ann = ann;
+        }
+    }
+
+    private static synchronized void scanPluginTools() {
+        if (pluginToolsScanned) return;
+        pluginToolsScanned = true;
+        try {
+            java.util.List<Class> classes = scanPluginClasses();
+            for (Class<?> clazz : classes) {
+                PluginAnnotation pa = clazz.getAnnotation(PluginAnnotation.class);
+                if (pa == null) continue;
+                for (java.lang.reflect.Method m : clazz.getMethods()) {
+                    McpTool ann = m.getAnnotation(McpTool.class);
+                    if (ann == null) continue;
+                    String toolName = ann.name().isEmpty() ? m.getName() : ann.name();
+                    String fullName = "plugin_" + clazz.getSimpleName() + "_" + toolName;
+                    PLUGIN_TOOLS.add(new PluginToolInfo(fullName, clazz, pa.payloadName(), m, ann));
+                    System.out.println("[MCP] plugin tool: " + fullName + " -> " + clazz.getName());
+                }
+            }
+        } catch (Exception e) {
+            System.out.println("[MCP] scanPluginTools error: " + e);
+        }
+    }
+
+    /** Scan plugin classes without touching ApplicationContext (its static init can fail headless). */
+    private static java.util.List<Class> scanPluginClasses() {
+        java.util.List<Class> out = new java.util.ArrayList<>();
+        try {
+            java.net.URL url = McpService.class.getResource("/shells/plugins/");
+            if (url == null) return out;
+            if ("jar".equals(url.getProtocol())) {
+                java.net.JarURLConnection conn = (java.net.JarURLConnection) url.openConnection();
+                java.util.jar.JarFile jar = conn.getJarFile();
+                java.util.Enumeration<java.util.jar.JarEntry> en = jar.entries();
+                while (en.hasMoreElements()) {
+                    String n = en.nextElement().getName();
+                    if (n.startsWith("shells/plugins/") && n.endsWith(".class") && n.indexOf('$') < 0) {
+                        String cn = n.substring(0, n.length() - 6).replace('/', '.');
+                        try {
+                            Class<?> c = Class.forName(cn, false, McpService.class.getClassLoader());
+                            if (c.getAnnotation(PluginAnnotation.class) != null) out.add(c);
+                        } catch (Throwable ignore) { }
+                    }
+                }
+            } else if ("file".equals(url.getProtocol())) {
+                collectPluginClasses(new java.io.File(url.toURI()), out);
+            }
+        } catch (Exception e) {
+            System.out.println("[MCP] scanPluginClasses error: " + e);
+        }
+        return out;
+    }
+
+    private static void collectPluginClasses(java.io.File dir, java.util.List<Class> out) {
+        java.io.File[] fs = dir.listFiles();
+        if (fs == null) return;
+        for (java.io.File f : fs) {
+            if (f.isDirectory()) {
+                collectPluginClasses(f, out);
+            } else if (f.getName().endsWith(".class") && f.getName().indexOf('$') < 0) {
+                try {
+                    String rel = f.getPath().replace('\\', '/');
+                    int idx = rel.indexOf("shells/plugins/");
+                    if (idx < 0) continue;
+                    String cn = rel.substring(idx).replace('/', '.').replace(".class", "");
+                    Class<?> c = Class.forName(cn, false, McpService.class.getClassLoader());
+                    if (c.getAnnotation(PluginAnnotation.class) != null) out.add(c);
+                } catch (Throwable ignore) { }
+            }
+        }
+    }
+
+    private static PluginToolInfo findPluginTool(String name) {
+        scanPluginTools();
+        for (PluginToolInfo info : PLUGIN_TOOLS) {
+            if (info.name.equals(name)) return info;
+        }
+        return null;
+    }
+
+    private static String pluginToolSchema(PluginToolInfo info) {
+        StringBuilder props = new StringBuilder("{");
+        StringBuilder required = new StringBuilder();
+        boolean first = true;
+        for (McpParam pr : info.ann.params()) {
+            if (!first) props.append(",");
+            first = false;
+            String t = pr.type() == null ? "string" : pr.type().toLowerCase();
+            String jt = t.equals("int") || t.equals("integer") ? "integer"
+                    : (t.equals("bool") || t.equals("boolean")) ? "boolean" : "string";
+            props.append("\"").append(esc(pr.name())).append("\":{\"type\":\"").append(jt)
+                  .append("\",\"description\":\"").append(esc(pr.desc())).append("\"");
+            if (pr.defaultValue() != null && !pr.defaultValue().isEmpty()) {
+                props.append(",\"default\":\"").append(esc(pr.defaultValue())).append("\"");
+            }
+            props.append("}");
+            if (pr.required()) {
+                if (required.length() > 0) required.append(",");
+                required.append("\"").append(esc(pr.name())).append("\"");
+            }
+        }
+        props.append("}");
+        if (required.length() > 0) props.append(",\"required\":[").append(required).append("]");
+        return "{\"type\":\"object\",\"properties\":" + props + "}";
+    }
+
+    private String callPluginTool(String name, Map<String, Object> a) {
+        try {
+            scanPluginTools();
+            PluginToolInfo first = null;
+            for (PluginToolInfo info : PLUGIN_TOOLS) {
+                if (info.name.equals(name)) { first = info; break; }
+            }
+            if (first == null) return "未知工具: " + name;
+            for (McpParam pr : first.ann.params()) {
+                if (pr.required() && !a.containsKey(pr.name())) {
+                    return "缺少必填参数: " + pr.name();
+                }
+            }
+            ShellEntity sh = getShellInit(a);
+            PluginToolInfo info = null;
+            for (PluginToolInfo t : PLUGIN_TOOLS) {
+                if (t.name.equals(name) && payloadMatches(sh, t.payloadName)) { info = t; break; }
+            }
+            if (info == null) {
+                Payload plDbg = sh.getPayloadModule();
+                String plName = plDbg == null ? "null" : plDbg.getClass().getName();
+                return "工具 " + name + " 不支持该 Shell 的 Payload 类型 (实际 " + plName + ")";
+            }
+            Plugin p = (Plugin) info.pluginClass.newInstance();
+            Object result;
+            try {
+                p.init(sh);
+                result = info.method.invoke(p, new Object[]{ a });
+            } finally {
+                try { p.close(); } catch (Throwable ignore) { }
+            }
+            return serializeResult(result, sh);
+        } catch (java.lang.reflect.InvocationTargetException ite) {
+            Throwable c = ite.getCause();
+            String msg = c != null && c.getMessage() != null ? c.getMessage()
+                    : (c != null ? c.toString() : ite.toString());
+            return "执行失败: " + msg;
+        } catch (Exception e) {
+            String msg = e.getMessage() != null ? e.getMessage() : e.toString();
+            return "执行失败: " + msg;
+        }
+    }
+
+    private static boolean payloadMatches(ShellEntity sh, String payloadName) {
+        if (payloadName == null || payloadName.isEmpty()) return true;
+        Payload pl = sh.getPayloadModule();
+        if (pl == null) return false;
+        Class<?> c = pl.getClass();
+        while (c != null && c != Object.class) {
+            PayloadAnnotation an = c.getAnnotation(PayloadAnnotation.class);
+            if (an != null) return payloadName.equals(an.Name());
+            c = c.getSuperclass();
+        }
+        return false;
+    }
+
+    private static String serializeResult(Object r, ShellEntity sh) {
+        if (r == null) return "";
+        if (r instanceof byte[]) {
+            byte[] b = (byte[]) r;
+            String enc = sh != null && sh.getEncoding() != null ? sh.getEncoding() : "UTF-8";
+            try { return new String(b, enc); } catch (Exception e) { return new String(b); }
+        }
+        return String.valueOf(r);
+    }
+
     // ==================== TOOLS LIST ====================
     private String toolsList(Object id) {
         StringBuilder sb = new StringBuilder();
@@ -1198,6 +1389,14 @@ public class McpService implements Plugin {
         sb.append(",").append(t("process_list","\u8fdb\u7a0b\u5217\u8868", p("shellId",s("\u5fc5\u586b"))));
         sb.append(",").append(t("file_search","\u641c\u7d22\u6587\u4ef6", p("shellId",s("\u5fc5\u586b"),"pattern",s("\u5fc5\u586b"),"path",s("\u53ef\u9009"))));
         sb.append(",").append(t("net_info","\u7f51\u7edc\u4fe1\u606f", p("shellId",s("\u5fc5\u586b"))));
+        // Plugin tools (scanned @McpTool); dedupe by name - impl selected by shell payload at call time
+        scanPluginTools();
+        java.util.HashSet<String> seenTools = new java.util.HashSet<>();
+        for (PluginToolInfo info : PLUGIN_TOOLS) {
+            if (seenTools.add(info.name)) {
+                sb.append(",").append(t(info.name, info.ann.desc(), pluginToolSchema(info)));
+            }
+        }
         sb.append("]}}");
         return sb.toString();
     }
@@ -1256,7 +1455,10 @@ public class McpService implements Plugin {
                 case "shell_backup": text = shellBackup(a); break;
                 case "mcp_status":  text = mcpStatus(a); break;
                 case "mcp_config":  text = mcpConfig(a); break;
-                default: text = "\u672a\u77e5\u5de5\u5177: " + name;
+                default: {
+                    text = callPluginTool(name, a);
+                    break;
+                }
             }
         } catch (Exception e) {
             text = "\u6267\u884c\u5931\u8d25: " + e.getClass().getSimpleName() + ": " + (e.getMessage() != null ? e.getMessage() : "");

