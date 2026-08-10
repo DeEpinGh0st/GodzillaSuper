@@ -9,7 +9,7 @@ import core.annotation.GenerateProcessor;
 import core.imp.ShellProcessor;
 
 @GenerateProcessor(
-    DisplayName = "ÎÞ",
+    DisplayName = "æ— ",
     superTemplate = {"jsp", "jspx"}
 )
 public class JspNone implements ShellProcessor {

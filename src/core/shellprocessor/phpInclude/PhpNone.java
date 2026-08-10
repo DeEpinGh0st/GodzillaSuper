@@ -9,7 +9,7 @@ import core.annotation.GenerateProcessor;
 import core.imp.ShellProcessor;
 
 @GenerateProcessor(
-    DisplayName = "ÎÞ",
+    DisplayName = "æ— ",
     superTemplate = {"php"}
 )
 public class PhpNone implements ShellProcessor {

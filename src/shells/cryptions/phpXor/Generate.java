@@ -61,7 +61,7 @@ public class Generate {
     public static String BypassReplace(String data, String pass) {
         try {
             InputStream inputStream = Generate.class.getResourceAsStream("template/templatebypass.bin");
-            String code = new String(functions.readInputStream(inputStream));
+            String code = new String(functions.readInputStream(inputStream), StandardCharsets.UTF_8);
             inputStream.close();
             data = code.replace("8WRl51GXKPkn8kusti7u8M8zWg==", xorEncrypt(data, pass));
             data = data.replace("MYPATH", generateRandomString(true));
@@ -85,9 +85,9 @@ public class Generate {
 
         try {
             InputStream inputStream = Generate.class.getResourceAsStream("template/" + stubName);
-            String code = new String(functions.readInputStream(inputStream));
+            String code = new String(functions.readInputStream(inputStream), StandardCharsets.UTF_8);
             inputStream.close();
-            data = TemplateEx.run(code.replace("{pass}", pass).replace("{secretKey}", secretKey)).getBytes();
+            data = TemplateEx.run(code.replace("{pass}", pass).replace("{secretKey}", secretKey)).getBytes(StandardCharsets.UTF_8);
             data = StartProcessor.process(data, "php");
         } catch (Exception var6) {
             Log.error(var6);

