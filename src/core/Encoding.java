@@ -12,6 +12,13 @@ public class Encoding {
 
     public static final String AUTO = "Auto";
 
+    /**
+     * Auto 模式下最近一次含 CJK 探测命中的字符集。
+     * 编码方向据此回推：目录列表按 GBK 解码出中文后，进入该目录时也必须按 GBK 编码回发，
+     * 否则目标端按自身字符集解析路径会「不存在」。纯 ASCII 响应不改变该状态。
+     */
+    private volatile String lastDecodedCharset;
+
     private static final String[] ENCODING_TYPES = new String[]{"Auto", "UTF-8", "GBK", "GB2312", "BIG5", "GB18030", "ISO-8859-1", "latin1", "UTF16", "ascii", "cp850"};
 
     private Encoding(String charsetString) {
@@ -23,14 +30,22 @@ public class Encoding {
     }
 
     public byte[] Encoding(String text) {
-        // Auto: encode direction defaults to UTF-8 (payloads are UTF-8 native)
-        String charset = AUTO.equals(this.charsetString) ? "UTF-8" : this.charsetString;
+        String charset = this.encodeCharset();
         try {
-            return text.getBytes(charset);
+            return charset != null ? text.getBytes(charset) : text.getBytes();
         } catch (UnsupportedEncodingException e) {
             util.Log.error(e);
             return text.getBytes();
         }
+    }
+
+    // Auto: use the charset that won the last CJK decode; before any detection fall back to
+    // platform default (same as the legacy empty-encoding behavior).
+    private String encodeCharset() {
+        if (!AUTO.equals(this.charsetString)) {
+            return this.charsetString;
+        }
+        return this.lastDecodedCharset;
     }
 
     public String Decoding(byte[] bytes) {
@@ -53,28 +68,33 @@ public class Encoding {
     // succeeds but contains no CJK while strict GBK decode does contain CJK,
     // treat the content as GBK. Never uses isMessyCode (false-positives on
     // pure Chinese+digit strings).
-    private static String autoDecoding(byte[] bytes) {
+    private String autoDecoding(byte[] bytes) {
         String utf8 = strictDecode("UTF-8", bytes);
         if (utf8 != null) {
             if (containsCjk(utf8)) {
+                this.lastDecodedCharset = "UTF-8";
                 return utf8;
             }
             String gbk = strictDecode("GBK", bytes);
             if (gbk != null && containsCjk(gbk)) {
+                this.lastDecodedCharset = "GBK";
                 return gbk;
             }
-            return utf8;
+            return utf8; // pure ASCII: keep previous detection
         }
         String gbk = strictDecode("GBK", bytes);
         if (gbk != null) {
+            this.lastDecodedCharset = "GBK";
             return gbk;
         }
         String gb18030 = strictDecode("GB18030", bytes);
         if (gb18030 != null) {
+            this.lastDecodedCharset = "GB18030";
             return gb18030;
         }
         String big5 = strictDecode("BIG5", bytes);
         if (big5 != null) {
+            this.lastDecodedCharset = "BIG5";
             return big5;
         }
         return new String(bytes);
