@@ -443,6 +443,15 @@ database:                 # 团队 PostgreSQL（仅团队模式使用）
 
 ## 编译与构建
 
+### 源码与 Release 对应（tag）
+
+每个 Release 对应一个 tag（`3.1.5` / `3.1.4` / `3.1.3` …），tag 指向该版本发布时的源码。要打包某个版本的 jar，先切到对应 tag：
+
+```bash
+git checkout 3.1.5    # 切到 3.1.5 发布源码，按下文步骤编译打包
+git checkout main     # 回到最新开发源码
+```
+
 > ⚠️ 源码默认 **GBK** 编码（`McpService.java` 为 UTF-8）。编辑 GBK 文件时避免用会重编码为 UTF-8 的工具，纯 ASCII 改动建议用 `sed`。
 
 ```bash
