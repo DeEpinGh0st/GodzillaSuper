@@ -126,35 +126,46 @@
 
 ```
 gsl/
-├── src/
-│   ├── core/                  # 核心框架
-│   │   ├── ApplicationContext.java     # 全局上下文（含 godMode 等）
+├── src/                     # 全部源码（说明见下方「src 目录说明」）
+│   ├── core/                # 核心框架
+│   │   ├── ApplicationContext.java     # 全局上下文（RELEASE_TAG、godMode 等）
 │   │   ├── Db.java                     # SQLite 持久化层
 │   │   ├── MigrateDb.java              # SQLite → PostgreSQL 迁移
 │   │   ├── OperationAuditLog.java      # 操作审计
+│   │   ├── annotation/                 # MCP 工具注解（McpTool / McpParam）
 │   │   ├── shell/                      # ShellEntity 等
 │   │   ├── shellprocessor/             # ASP/PHP/JSP/C# 编码与变形处理器
-│   │   ├── c2profile/                  # C2 配置与内存马模板（含 .jar/.javax）
-│   │   └── ui/                         # MainActivity、StartupModeDialog、
-│   │                                   # ShellFileManager、DataView、WallpaperManager 等
+│   │   ├── c2profile/                  # C2 配置与内存马模板
+│   │   └── ui/                         # MainActivity、StartupModeDialog、ShellFileManager 等
 │   ├── shells/
-│   │   ├── payloads/           # 各平台动态载荷（Java / C# / NetCore 模块）
-│   │   │   └── netcore/        # NetCoreShell + payload_core.dll
-│   │   ├── cryptions/          # 流量加密（JavaAes / JavaC2、csharpAes、phpXor、aspXor、NETCORE_AES_BASE64）
-│   │   │   └── netcore/        # Middleware 模板 + AES Base64 加密器
-│   │   └── plugins/            # 增强插件（java / csharp / netcore / generic）
-│   │       ├── generic/McpService.java # MCP HTTP/SSE 服务（AI 操控入口，应用级）
-│   │       └── netcore/        # NetCore 插件 UI + assets/*.dll
-│   ├── util/                   # HTTP、IP 库、工具函数
-│   └── data/                   # 内置资源（av.json、META-INF）
-├── native/                     # RASP 绕过 JNI 源码（rasp_bypass_jni.c）+ build_jni 脚本
-├── bin/gsl5.jar                # 预编译主程序
-├── KeyGen.java                 # 授权文件生成器（输出 license.lic）
-├── compile_rasp_bypass.bat/.sh # RASP 模块编译脚本
-└── build_all_rasp_bypass.bat   # 一键全量编译
+│   │   ├── channel/          # 请求通道（HTTP 直连 / C2 Profile）
+│   │   ├── payloads/         # 各平台动态载荷源码（java / csharp / netcore）
+│   │   ├── cryptions/        # 流量加密器（JavaAes / csharpAes / phpXor / aspXor / netcore）
+│   │   └── plugins/          # 插件（java / csharp / netcore / asp / php / generic + assets 目标端模块）
+│   ├── util/                 # HTTP 客户端、IP 库、工具函数
+│   ├── data/                 # 内置资源（av.json、qqwry.ipdb）
+│   └── META-INF/             # 打包清单（Main-Class: core.ui.MainActivity）
+└── KeyGen.java               # 授权文件生成器（输出 license.lic）
 ```
 
+> 预编译 `gsl5.jar` 不纳入仓库（见 [Release 下载](#快速开始)）；`native/` JNI 源码与 RASP 编译脚本仅本地开发环境持有，不随仓库分发。
 > 运行/构建还需外部依赖（`lib/`：ASM、PostgreSQL 驱动等；`bin/`：okhttp、kotlin-stdlib 等），未纳入本仓库。
+
+### src 目录说明
+
+仓库只维护 **src 源码**：`src` 是全部功能的唯一源码来源，修改后重新打包即得到可运行的 `gsl5.jar`。
+
+| 目录 | 作用 |
+|------|------|
+| `src/core/` | 应用核心：全局上下文（版本号）、SQLite 持久化（Db / MigrateDb）、操作审计、`@McpTool`/`@McpParam` 注解机制（MCP 插件工具）、Shell 实体、编码与变形处理器、C2 模板、全部界面 |
+| `src/shells/payloads/` | 各语言动态载荷源码（Java / C# / NetCore），生成 WebShell 时编译打包进载荷 |
+| `src/shells/cryptions/` | 流量加密器源码（JAVA_AES_BASE64 / CSHARP_AES_BASE64 / PHP_XOR / ASP_XOR / NETCORE_AES_BASE64 等） |
+| `src/shells/plugins/` | 插件工具（TH_TOOLS / Mimikatz / OaTools / Useradd / ShellAvscan / RaspBypass / McpService 等）；按目标语言分子目录，`generic/` 为应用级（MCP 服务），`assets/` 为目标端模块源码 |
+| `src/shells/channel/` | 请求通道实现（HTTP 直连 / C2 Profile 通道） |
+| `src/util/` | 通用工具（HTTP 客户端、纯真 IP 库、工具函数） |
+| `src/data/` | 内置资源（`av.json` 杀软指纹、`qqwry.ipdb` IP 地理位置库） |
+
+修改源码后重新打包见 [编译与构建](#编译与构建)。
 
 ---
 
@@ -415,11 +426,11 @@ javac -encoding GBK -cp "lib/*;bin/*" -d out/production/gsl5 \
 javac -encoding UTF-8 -cp "lib/*;bin/*;out/production/gsl5" \
   -d out/production/gsl5 src/shells/plugins/generic/McpService.java
 
-# 3) 编译 RASP 服务端模块
+# 3) 编译 RASP 服务端模块（脚本不随仓库分发，仅本地开发环境持有）
 compile_rasp_bypass.bat          # Windows
 ./compile_rasp_bypass.sh         # Linux/macOS
 
-# 4)（可选）编译 JNI 库 —— 自定义原生绕过
+# 4)（可选）编译 JNI 库 —— 自定义原生绕过（native/ 源码与 build_jni 脚本不随仓库分发）
 cd native && build_jni.bat win-x64    # 或 build_jni.sh linux-x64
 
 # 5) 打包
