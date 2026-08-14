@@ -8,9 +8,25 @@
 
 
 
+## 目录
+
+- [总体说明](#总体说明)
+- [源码说明](#源码说明)
+- [更新日志](#更新日志)
+- [核心特性](#核心特性)
+- [快速开始](#快速开始)
+- [使用指南](#使用指南)
+- [MCP 服务（AI 操控）](#mcp-服务ai-操控)
+- [配置文件](#配置文件)
+- [编译与构建](#编译与构建)
+- [常见问题](#常见问题)
+- [免责声明](#免责声明)
+
+---
+
 ## 总体说明
 
-基于 Godzilla 深度二次开发的 **WebShell 管理与红队后渗透平台**。在保留 Godzilla 全部能力的基础上，扩展了 **MCP 服务（AI 驱动）**、**MCP 插件工具（全内存加载）**、**RASP 绕过 + 字节码多态混淆**、**内存马注入**、**团队协作（多数据源）** 等能力，并提供完整的操作审计。
+基于 Godzilla 深度二次开发的 **WebShell 管理与红队后渗透平台**。在保留 Godzilla 全部能力的基础上，扩展了 **MCP 服务（AI 驱动）**、**MCP 插件工具（全内存加载）**、**Shell 一键分享（`gsl5://` 链接）**、**团队协作（多数据源）**、**NetCore 动态载荷** 等能力，并提供完整的操作审计。
 
 > ⚠️ 本工具仅供**授权的安全测试与研究**使用，严禁用于任何非法用途。使用本工具产生的任何后果由使用者自行承担。详见文末[免责声明](#免责声明)。
 
@@ -19,10 +35,11 @@
 | 功能 | 说明 |
 |------|------|
 | 多平台 WebShell 管理 | JSP / ASPX / PHP / ASP / ASP.NET Core：文件管理、命令执行、数据库操作、批量测试、导入导出 |
+| Shell 一键分享（CV 分享） | 选中 Shell 按 `Ctrl+C` 即复制 `gsl5://` 分享链接（URL / 密码 / 密钥 / 分组等 24 项配置全打包）；对方 `Ctrl+V` 或「目标 → 导入链接」一键导入，自动挂原分组 |
 | MCP 服务（AI 操控） | 内置 HTTP/SSE 服务，Claude Desktop / Claude Code / Codex 一键接入；Shell 管理、命令执行、文件操作等 70+ 工具，Bearer Token 鉴权 |
 | MCP 插件工具 | `@McpTool` 注解机制，插件方法自动注册为 MCP 工具：提权（TH_TOOLS）、凭据抓取（Mimikatz）、杀软识别、OA 信息等 10 个工具，全部内存加载不落盘 |
-| RASP 绕过 | Detect→Plan→Exec→Verify 全链路管线、OpenRASP 深软关、JNI 原生执行、ASM 字节码多态混淆（随机字段名 + 随机 NOP） |
-| 内存马注入 | Tomcat（Filter / Servlet / Listener）、Spring（Controller）、Jetty、VM Anonymous Class |
+| 存活扫描 | 菜单「攻击 → 存活扫描」批量检测分组内 Shell 存活状态；另有批量连接测试 |
+| 客户端证书认证 | Shell 支持双向 TLS：客户端证书路径 + 证书密码，适配要求客户端证书的目标 |
 | 团队协作与审计 | 单机 SQLite / UNC 远程 SQLite / PostgreSQL 三数据源，全量操作审计 |
 | NetCore 动态载荷 | ASP.NET Core Middleware 载荷 + AES Base64 加密，文件 / 命令 / SQL / 插件加载 |
 | 检查更新 | 启动静默检查 GitHub Release，新版弹窗提示 |
@@ -31,7 +48,7 @@
 
 **新增**：
 - 全局 MCP 服务与 AI 操控（3.1.0）+ MCP 插件工具（3.1.5）
-- RASP 绕过全链路与字节码多态混淆（3.1.2）
+- Shell 一键分享 / 导入（`gsl5://` 链接，Ctrl+C / Ctrl+V）
 - NetCore 动态载荷（3.1.0）
 - 团队多数据源协作（单机 / UNC / PostgreSQL）
 - MCP Bearer Token 鉴权 + CLI 自动写配置 + Linux headless 支持（3.1.3）
@@ -60,7 +77,7 @@ gsl/
 │   │   ├── annotation/                 # MCP 工具注解（McpTool / McpParam）
 │   │   ├── shell/                      # ShellEntity 等
 │   │   ├── shellprocessor/             # ASP/PHP/JSP/C# 编码与变形处理器
-│   │   ├── c2profile/                  # C2 配置与内存马模板
+│   │   ├── c2profile/                  # C2 配置模板
 │   │   └── ui/                         # MainActivity、StartupModeDialog、ShellFileManager 等
 │   ├── shells/
 │   │   ├── channel/          # 请求通道（HTTP 直连 / C2 Profile）
@@ -78,12 +95,12 @@ gsl/
 | `src/core/` | 应用核心：全局上下文（版本号）、SQLite 持久化（Db / MigrateDb）、操作审计、`@McpTool`/`@McpParam` 注解机制（MCP 插件工具）、Shell 实体、编码与变形处理器、C2 模板、全部界面 |
 | `src/shells/payloads/` | 各语言动态载荷源码（Java / C# / NetCore），生成 WebShell 时编译打包进载荷 |
 | `src/shells/cryptions/` | 流量加密器源码（JAVA_AES_BASE64 / CSHARP_AES_BASE64 / PHP_XOR / ASP_XOR / NETCORE_AES_BASE64 等） |
-| `src/shells/plugins/` | 插件工具（TH_TOOLS / Mimikatz / OaTools / Useradd / ShellAvscan / RaspBypass / McpService 等）；按目标语言分子目录，`generic/` 为应用级（MCP 服务），`assets/` 为目标端模块源码 |
+| `src/shells/plugins/` | 插件工具（TH_TOOLS / Mimikatz / OaTools / Useradd / ShellAvscan / McpService 等）；按目标语言分子目录，`generic/` 为应用级（MCP 服务），`assets/` 为目标端模块源码 |
 | `src/shells/channel/` | 请求通道实现（HTTP 直连 / C2 Profile 通道） |
 | `src/util/` | 通用工具（HTTP 客户端、纯真 IP 库、工具函数） |
 | `src/data/` | 内置资源（`av.json` 杀软指纹、`qqwry.ipdb` IP 地理位置库） |
 
-> 预编译 `gsl5.jar` 不纳入仓库（见 [Release 下载](#快速开始)）；`native/` JNI 源码与 RASP 编译脚本仅本地开发环境持有，不随仓库分发。
+> 预编译 `gsl5.jar` 不纳入仓库（见 [Release 下载](#快速开始)）；`native/` JNI 源码与相关编译脚本仅本地开发环境持有，不随仓库分发。
 > 运行/构建还需外部依赖（`lib/`：ASM、PostgreSQL 驱动等；`bin/`：okhttp、kotlin-stdlib 等），未纳入本仓库。
 > 修改源码后重新打包见 [编译与构建](#编译与构建)。
 
@@ -116,8 +133,7 @@ gsl/
 - **Linux headless 修复**：无 GUI 环境不再报 Font NPE
 
 ### 3.1.2（2026-07-17）
-- RASP 绕过全链路：Detect→Plan→Exec→Verify 管线
-- OpenRASP 深软关、命令回显修复、Shell 加载遮罩竞态修复
+- 命令回显修复、Shell 加载遮罩竞态修复
 - JNI 自动加载、Win x64 DLL 内置
 
 ### 3.1.1（2026-07-17）
@@ -130,22 +146,6 @@ gsl/
 
 
 
-
-## 目录
-
-- [总体说明](#总体说明)
-- [源码说明](#源码说明)
-- [更新日志](#更新日志)
-- [核心特性](#核心特性)
-- [快速开始](#快速开始)
-- [使用指南](#使用指南)
-- [MCP 服务（AI 操控）](#mcp-服务ai-操控)
-- [配置文件](#配置文件)
-- [编译与构建](#编译与构建)
-- [常见问题](#常见问题)
-- [免责声明](#免责声明)
-
----
 
 ## 核心特性
 
@@ -174,11 +174,12 @@ gsl/
 - **批量连接测试、搜索、克隆、导入导出**（`gsl5://import?data=...` 链接共享配置）
 - **NetCore 载荷**（`NetCoreDynamicPayload` + `NETCORE_AES_BASE64`）：面向 ASP.NET Core Middleware 的完整动态载荷（文件 / 命令 / SQL / 插件加载）
 
-### 4. RASP 绕过与字节码多态混淆（RaspBypass 插件）
-- **命令执行绕过**：`Unsafe.allocateInstance` + `forkAndExec`、JNI 原生执行、新线程 / GC finalize、Tomcat-JNI、`ProcessImpl` 直调、反射关闭后执行
-- **RASP 探测与禁用**：自动识别 OpenRASP / JRASP / Elkeid 等，支持禁用 Hook、改配置、卸载 Agent
-- **ASM 多态混淆**（`RaspBypass.obfuscateModule()`）：上传 `RaspBypassModule` 前，用 ObjectWeb ASM 注入**随机字段名 + 随机 NOP 指令**，使每次字节码特征不同，规避哈希 / 静态签名检测
-- **内存马注入**：Tomcat（Filter / Servlet / Listener）、Spring（Controller）、Jetty、**VM Anonymous Class**（隐蔽性最高）
+### 4. Shell 一键分享与批量检测
+- **CV 分享（`gsl5://` 链接）**：主界面选中 Shell 按 `Ctrl+C`，URL / 密码 / 密钥 / 载荷 / 加密器 / 编码 / 请求头 / 代理 / 超时 / 备注 / C2Profile / 大文件参数 / 客户端证书 / 所属分组共 24 项配置打包（gzip + Base64URL）后自动复制到剪贴板
+- **CV 导入**：收到链接后按 `Ctrl+V` 自动检测剪贴板并提示导入；也可菜单「目标 → 导入链接」手动粘贴。导入自动生成新 ID 避免与原库冲突、自动挂回原分组，支持一次导入多条
+- **存活扫描**：菜单「攻击 → 存活扫描」批量检测当前分组内 Shell 存活状态；另有批量连接测试、搜索、克隆
+- **客户端证书认证**：Shell 支持双向 TLS（客户端证书路径 + 证书密码），适配要求客户端证书的目标
+- MCP 模式同样支持：`shell_export` / `shell_import` / `shell_batch_test`
 
 ### 5. 插件集
 
@@ -189,7 +190,6 @@ gsl/
 | `Useradd` | Java / C# / 通用 | 添加账号 |
 | `OaTools` | Java / C# | 金蝶 / 致远 / 泛微 / 用友 / Weblogic / vCenter 等专项代理 |
 | `ShellAvscan` | 通用 | 目标安全软件探测 |
-| `RaspBypass` | Java | RASP 绕过 + 内存马（见上） |
 | `McpService` | 通用（应用级） | 内置 MCP HTTP/SSE 服务；全局菜单入口，支持 Claude / Codex 一键写配置 |
 | NetCore 插件组 | .NET Core | RealCmd / PortScan / Zip / HttpProxy / EasySocks / EvalCode / ExecuteAssembly / ShellcodeLoader |
 
@@ -232,7 +232,7 @@ java -jar bin/gsl5.jar mcp 192.168.1.10:9123
 - **3.1.5（最新）**：PHP 混淆乱码修复 + MCP 插件工具（`@McpTool` 10 个工具，全部内存加载）+ shell_info 补全— [Release](https://github.com/Xaaaa-bip/GodzillaSuper/releases/tag/3.1.5) · [jar](https://github.com/Xaaaa-bip/GodzillaSuper/releases/download/3.1.5/gsl5.jar)
 - **3.1.4**：检查更新 + 菜单优化 — [Release](https://github.com/Xaaaa-bip/GodzillaSuper/releases/tag/3.1.4) · [jar](https://github.com/Xaaaa-bip/GodzillaSuper/releases/download/3.1.4/gsl5.jar)
 - **3.1.3**：MCP Token 鉴权 + CLI 自动写配置 + Linux headless 修复 — [Release](https://github.com/Xaaaa-bip/GodzillaSuper/releases/tag/3.1.3) · [jar](https://github.com/Xaaaa-bip/GodzillaSuper/releases/download/3.1.3/gsl5.jar)
-- **3.1.2**：RASP 绕过全链路 — [Release](https://github.com/Xaaaa-bip/GodzillaSuper/releases/tag/3.1.2) · [jar](https://github.com/Xaaaa-bip/GodzillaSuper/releases/download/3.1.2/gsl5.jar)
+- **3.1.2**：命令回显修复 + JNI 自动加载 — [Release](https://github.com/Xaaaa-bip/GodzillaSuper/releases/tag/3.1.2) · [jar](https://github.com/Xaaaa-bip/GodzillaSuper/releases/download/3.1.2/gsl5.jar)
 - **3.1.1**：PHP 免杀 0KB 修复 — [Release](https://github.com/Xaaaa-bip/GodzillaSuper/releases/tag/3.1.1) · [jar](https://github.com/Xaaaa-bip/GodzillaSuper/releases/download/3.1.1/gsl5.jar)
 - **3.1.0**：NetCore + 全局 MCP — [Release](https://github.com/Xaaaa-bip/GodzillaSuper/releases/tag/3.1.0) · [jar](https://github.com/Xaaaa-bip/GodzillaSuper/releases/download/3.1.0/gsl5.jar)
 
@@ -268,18 +268,16 @@ java -jar bin/gsl5.jar mcp 192.168.1.10:9123
 - **数据库** —— 配置目标库（MySQL / Oracle / SQL Server / PostgreSQL / SQLite）→ 执行 SQL、管理连接配置。
 - **插件** —— 右键 Shell → 插件 → 选择功能模块。
 
-### RaspBypass 插件流程
+### Shell 分享（gsl5:// 链接）
 
-1. **智能诊断**（`opsEnvironment`）：探测目标 OS、进程、已注入 RASP / Agent 指纹，给出绕过建议。
-2. **命令执行**：选绕过方法 ——
-   - `Unsafe.allocateInstance + forkAndExec`（绕构造函数监控）
-   - **JNI 原生执行**（脱离 JVM 监控层，需先加载 native 库）
-   - 新线程 / GC finalize（切割调用栈，破坏上下文检测）
-   - Tomcat-JNI / `ProcessImpl` 直调 / 反射关闭后执行
-3. **RASP Disable**：识别 OpenRASP / JRASP / Elkeid 等 → 禁用 Hook / 改配置 / 卸载 Agent。
-4. **Memory Shell**：注入 Tomcat（Filter / Servlet / Listener）/ Spring（Controller）/ Jetty / VM Anonymous Class 内存马。
+1. **导出**：主界面选中 Shell（可多选）→ 按 `Ctrl+C` → 分享链接自动复制到剪贴板，提示「链接已复制，可发送给他人通过 Ctrl+V 导入」
+2. **分享**：把链接发给同事（微信 / QQ / 聊天工具均可）
+3. **导入**：对方打开 GSL5 后按 `Ctrl+V`（自动检测剪贴板并提示），或菜单「目标 → 导入链接」粘贴 → 确认即一键入库
 
-> `RaspBypassModule` 上传前自动经 ASM 多态混淆（随机字段名 + 随机 NOP），规避哈希 / 签名检测。
+- 链接内含 Shell 完整配置（URL、密码、密钥、载荷、加密器、编码、请求头、代理、超时、备注、C2Profile、大文件参数、客户端证书、所属分组，共 24 项），gzip + Base64URL 编码
+- 导入自动生成新 ID（不与原库冲突）、自动挂回原分组，支持一次导入多条 Shell
+- MCP 模式同样支持：`shell_export` / `shell_import`（自动回连测试）
+- ⚠️ 链接内含密码与密钥，请仅分享给可信人员
 
 ### 提权与后渗透插件
 
@@ -456,11 +454,11 @@ javac -encoding GBK -cp "lib/*;bin/*" -d out/production/gsl5 \
 javac -encoding UTF-8 -cp "lib/*;bin/*;out/production/gsl5" \
   -d out/production/gsl5 src/shells/plugins/generic/McpService.java
 
-# 3) 编译 RASP 服务端模块（脚本不随仓库分发，仅本地开发环境持有）
+# 3) 编译目标端模块（脚本不随仓库分发，仅本地开发环境持有）
 compile_rasp_bypass.bat          # Windows
 ./compile_rasp_bypass.sh         # Linux/macOS
 
-# 4)（可选）编译 JNI 库 —— 自定义原生绕过（native/ 源码与 build_jni 脚本不随仓库分发）
+# 4)（可选）编译 JNI 库（native/ 源码与 build_jni 脚本不随仓库分发）
 cd native && build_jni.bat win-x64    # 或 build_jni.sh linux-x64
 
 # 5) 打包
@@ -496,8 +494,8 @@ A：生成时选 `NetCoreDynamicPayload` + `NETCORE_AES_BASE64`，把 Middleware
 **Q：团队模式连不上数据库？**
 A：PostgreSQL 需允许远程连接（`pg_hba.conf`），确认用户名密码正确；先用 `StartupModeDialog` 的 Test Connection 验证。
 
-**Q：如何绕过目标上的 RASP？**
-A：用 `RaspBypass` 插件，先"自动探测"识别 RASP 类型，再选对应绕过方法（JNI 原生执行 / Unsafe+forkAndExec 等）；模块上传自带 ASM 多态混淆。
+**Q：怎么把 Shell 配置分享给同事？**
+A：选中 Shell 按 `Ctrl+C`，把复制的 `gsl5://` 链接发给对方；对方按 `Ctrl+V` 或菜单「目标 → 导入链接」即可一键导入。链接含密码密钥，仅发给可信人员。
 
 ---
 
