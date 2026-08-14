@@ -1548,6 +1548,7 @@ public class McpService implements Plugin {
                     : pl.execCommand("locale charmap 2>/dev/null || echo $LANG");
             String fromProbe = parseEncodingFromProbe(probe, isWin);
             String cur = safeEncoding(dbEncoding);
+            if ("Auto".equalsIgnoreCase(cur)) return; // Auto: Encoding.Decoding 逐响应自动探测，无需 chcp 改写
             if (fromProbe != null && !fromProbe.equalsIgnoreCase(cur)) {
                 sh.setEncoding(fromProbe);
                 try { if (sh.getPayloadModule() != null) sh.getPayloadModule().close(); } catch (Exception ignored) {}
@@ -1866,7 +1867,7 @@ public class McpService implements Plugin {
         sh.setSecretKey((String) a.get("secretKey"));
         sh.setPayload((String) a.get("payload"));
         sh.setCryption((String) a.get("cryption"));
-        sh.setEncoding((String) a.getOrDefault("encoding", "UTF-8"));
+        sh.setEncoding((String) a.getOrDefault("encoding", "Auto"));
         if (a.containsKey("remark")) sh.setRemark((String) a.get("remark"));
         if (a.containsKey("headers")) sh.setHeader((String) a.get("headers"));
         if (a.containsKey("proxyType")) sh.setProxyType((String) a.get("proxyType"));
@@ -2402,7 +2403,7 @@ public class McpService implements Plugin {
         sh.setId(UUID.randomUUID().toString());
         sh.setUrl(url); sh.setPassword(password); sh.setSecretKey(secretKey);
         sh.setPayload(payload); sh.setCryption(cryption);
-        sh.setEncoding(safeEncoding((String) a.getOrDefault("encoding", "UTF-8")));
+        sh.setEncoding(safeEncoding((String) a.getOrDefault("encoding", "Auto")));
         try {
             Object cryptionObj = ApplicationContext.getCryption(payload, cryption);
             if (cryptionObj == null) return "\u672a\u627e\u5230\u52a0\u5bc6\u5668: " + cryption;
@@ -2495,7 +2496,7 @@ public class McpService implements Plugin {
                 ShellEntity sh = new ShellEntity();
                 sh.setId(UUID.randomUUID().toString());
                 sh.setUrl(dec(f[0])); sh.setPassword(dec(f[1])); sh.setSecretKey(dec(f[2]));
-                sh.setPayload(dec(f[3])); sh.setCryption(dec(f[4])); sh.setEncoding(dec(f[5]));
+                sh.setPayload(dec(f[3])); sh.setCryption(dec(f[4])); String enc = dec(f[5]); if (enc != null && !enc.trim().isEmpty()) sh.setEncoding(enc);
                 sh.setHeader(dec(f[6])); sh.setReqLeft(dec(f[7])); sh.setReqRight(dec(f[8]));
                 try { sh.setConnTimeout(Integer.parseInt(f[9])); } catch (Exception e) {}
                 try { sh.setReadTimeout(Integer.parseInt(f[10])); } catch (Exception e) {}

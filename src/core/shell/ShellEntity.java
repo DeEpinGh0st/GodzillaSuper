@@ -89,7 +89,7 @@ public class ShellEntity {
         this.payload = "";
         this.cryption = "";
         this.remark = "";
-        this.encoding = "";
+        this.encoding = "Auto";
         this.headers = new LinkedHashMap();
         this.reqLeft = "";
         this.reqRight = "";

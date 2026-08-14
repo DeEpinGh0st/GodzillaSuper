@@ -1106,7 +1106,10 @@ public class MainActivity extends JFrame {
                 shell.setSecretKey(decodeField(fields[2]));
                 shell.setPayload(decodeField(fields[3]));
                 shell.setCryption(decodeField(fields[4]));
-                shell.setEncoding(decodeField(fields[5]));
+                String enc = decodeField(fields[5]);
+                if (enc != null && !enc.trim().isEmpty()) {
+                    shell.setEncoding(enc);
+                }
                 shell.setHeader(decodeField(fields[6]));
                 shell.setReqLeft(decodeField(fields[7]));
                 shell.setReqRight(decodeField(fields[8]));
