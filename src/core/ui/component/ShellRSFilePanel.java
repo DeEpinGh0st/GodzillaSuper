@@ -2,6 +2,7 @@ package core.ui.component;
 
 import core.ApplicationContext;
 import core.EasyI18N;
+import core.Encoding;
 import core.imp.Payload;
 import core.shell.ShellEntity;
 import core.ui.component.dialog.GOptionPane;
@@ -35,6 +36,7 @@ public class ShellRSFilePanel extends JPanel {
     private JPanel topPanel;
     private RTextScrollPane scrollPane;
     private String encodingTypeString;
+    private Encoding encodingModule;
     private String currentFile;
 
     public ShellRSFilePanel(ShellEntity shellContext, JPanel parentPanel, String containerName) {
@@ -51,6 +53,7 @@ public class ShellRSFilePanel extends JPanel {
         this.shellContext = shellContext;
         this.topPanel = new JPanel();
         this.encodingComboBox = new JComboBox(ApplicationContext.getAllEncodingTypes());
+        this.encodingModule = Encoding.getEncoding("Auto");
         this.saveButton = new JButton("保存");
         this.refreshButton = new JButton("刷新");
         this.backButton = new JButton("返回");
@@ -72,6 +75,7 @@ public class ShellRSFilePanel extends JPanel {
         this.encodingComboBox.addActionListener((e) -> {
             Object item = this.encodingComboBox.getSelectedItem();
             this.encodingTypeString = item instanceof String ? (String)item : null;
+            this.encodingModule.setCharsetString(this.encodingTypeString == null ? "UTF-8" : this.encodingTypeString);
             this.refreshData();
         });
         automaticBindClick.bindJButtonClick(this, this);
@@ -96,29 +100,14 @@ public class ShellRSFilePanel extends JPanel {
     }
 
     private void refreshData() {
-        try {
-            byte[] data = this.fileData == null ? new byte[0] : this.fileData;
-            String enc = this.encodingTypeString;
-            if (enc == null || enc.trim().length() == 0) {
-                enc = "UTF-8";
-            }
-
-            this.fileDataTextArea.setText(new String(data, enc));
-        } catch (Exception e) {
-            try {
-                byte[] data = this.fileData == null ? new byte[0] : this.fileData;
-                this.fileDataTextArea.setText(new String(data));
-            } catch (Exception ignored) {
-            }
-
-            Log.error(e);
-        }
+        byte[] data = this.fileData == null ? new byte[0] : this.fileData;
+        this.fileDataTextArea.setText(this.encodingModule.Decoding(data));
     }
 
     public void saveButtonClick(ActionEvent actionEvent) {
         if (this.payload.isAlive()) {
             String file = this.readFileTextField.getText();
-            boolean ok = this.payload.uploadFile(file, functions.stringToByteArray(this.fileDataTextArea.getText(), this.encodingTypeString));
+            boolean ok = this.payload.uploadFile(file, this.encodingModule.Encoding(this.fileDataTextArea.getText()));
             if (ok) {
                 GOptionPane.showMessageDialog(this, "保存成功", "提示", 1);
             } else {

@@ -32,6 +32,22 @@ public class Encoding {
     public byte[] Encoding(String text) {
         String charset = this.encodeCharset();
         try {
+            if ("UTF-16LE".equals(charset)) {
+                byte[] body = text.getBytes("UTF-16LE");
+                byte[] out = new byte[body.length + 2];
+                out[0] = (byte)0xFF;
+                out[1] = (byte)0xFE;
+                System.arraycopy(body, 0, out, 2, body.length);
+                return out;
+            }
+            if ("UTF-16BE".equals(charset)) {
+                byte[] body = text.getBytes("UTF-16BE");
+                byte[] out = new byte[body.length + 2];
+                out[0] = (byte)0xFE;
+                out[1] = (byte)0xFF;
+                System.arraycopy(body, 0, out, 2, body.length);
+                return out;
+            }
             return charset != null ? text.getBytes(charset) : text.getBytes();
         } catch (UnsupportedEncodingException e) {
             util.Log.error(e);
@@ -63,15 +79,27 @@ public class Encoding {
         }
     }
 
-    // Auto: strict UTF-8 first. GBK bytes can occasionally form valid UTF-8
-    // (e.g. CJK GBK pairs decode as Hebrew/Cyrillic), so when strict UTF-8
-    // succeeds but contains no CJK while strict GBK decode does contain CJK,
-    // treat the content as GBK. Never uses isMessyCode (false-positives on
-    // pure Chinese+digit strings).
+    // Auto: BOM markers win first, then strict UTF-8. GBK bytes can occasionally
+    // form valid UTF-8 (e.g. CJK GBK pairs decode as Hebrew), so when strict UTF-8
+    // succeeds but shows no CJK while strict GBK decode does contain CJK, treat the
+    // content as GBK. Latinish UTF-8 (accents) is kept as UTF-8 even though GBK
+    // misdecode of it yields CJK. Never uses isMessyCode (false-positives on pure
+    // Chinese+digit strings).
     private String autoDecoding(byte[] bytes) {
+        String bom = decodeWithBom(bytes);
+        if (bom != null) {
+            return bom;
+        }
         String utf8 = strictDecode("UTF-8", bytes);
         if (utf8 != null) {
             if (containsCjk(utf8)) {
+                this.lastDecodedCharset = "UTF-8";
+                return utf8;
+            }
+            if (!containsNonAscii(utf8)) {
+                return utf8; // pure ASCII: keep previous detection
+            }
+            if (looksLatinish(utf8)) {
                 this.lastDecodedCharset = "UTF-8";
                 return utf8;
             }
@@ -80,7 +108,8 @@ public class Encoding {
                 this.lastDecodedCharset = "GBK";
                 return gbk;
             }
-            return utf8; // pure ASCII: keep previous detection
+            this.lastDecodedCharset = "UTF-8";
+            return utf8;
         }
         String gbk = strictDecode("GBK", bytes);
         if (gbk != null) {
@@ -98,6 +127,35 @@ public class Encoding {
             return big5;
         }
         return new String(bytes);
+    }
+
+    private String decodeWithBom(byte[] bytes) {
+        if (bytes.length >= 3 && (bytes[0] & 0xFF) == 0xEF && (bytes[1] & 0xFF) == 0xBB && (bytes[2] & 0xFF) == 0xBF) {
+            String s = strictDecode("UTF-8", bytes);
+            if (s != null) {
+                this.lastDecodedCharset = "UTF-8";
+                return stripBom(s);
+            }
+        }
+        if (bytes.length >= 2 && (bytes[0] & 0xFF) == 0xFF && (bytes[1] & 0xFF) == 0xFE) {
+            String s = strictDecode("UTF-16LE", bytes);
+            if (s != null) {
+                this.lastDecodedCharset = "UTF-16LE";
+                return stripBom(s);
+            }
+        }
+        if (bytes.length >= 2 && (bytes[0] & 0xFF) == 0xFE && (bytes[1] & 0xFF) == 0xFF) {
+            String s = strictDecode("UTF-16BE", bytes);
+            if (s != null) {
+                this.lastDecodedCharset = "UTF-16BE";
+                return stripBom(s);
+            }
+        }
+        return null;
+    }
+
+    private static String stripBom(String s) {
+        return s.startsWith("﻿") ? s.substring(1) : s;
     }
 
     // Returns null when the byte sequence is not valid in the charset.
@@ -122,6 +180,36 @@ public class Encoding {
             }
         }
         return false;
+    }
+
+    private static boolean containsNonAscii(String text) {
+        for (int i = 0; i < text.length(); ++i) {
+            if (text.charAt(i) >= 0x80) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Non-ASCII chars all in common European letter/punctuation blocks: real UTF-8.
+    // GBK misdecoding of UTF-8 accents yields CJK (e.g. é -> 茅), which must not win.
+    private static boolean looksLatinish(String text) {
+        for (int i = 0; i < text.length(); ++i) {
+            char c = text.charAt(i);
+            if (c < 0x80) {
+                continue;
+            }
+            Character.UnicodeBlock block = Character.UnicodeBlock.of(c);
+            if (block != Character.UnicodeBlock.LATIN_1_SUPPLEMENT
+                    && block != Character.UnicodeBlock.LATIN_EXTENDED_A
+                    && block != Character.UnicodeBlock.LATIN_EXTENDED_B
+                    && block != Character.UnicodeBlock.LATIN_EXTENDED_ADDITIONAL
+                    && block != Character.UnicodeBlock.GENERAL_PUNCTUATION
+                    && block != Character.UnicodeBlock.CURRENCY_SYMBOLS) {
+                return false;
+            }
+        }
+        return true;
     }
 
     public void setCharsetString(String charsetString) {
