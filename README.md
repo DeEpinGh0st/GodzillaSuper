@@ -463,14 +463,7 @@ javac -encoding GBK -cp "lib/*;bin/*" -d out/production/gsl5 \
 javac -encoding UTF-8 -cp "lib/*;bin/*;out/production/gsl5" \
   -d out/production/gsl5 src/shells/plugins/generic/McpService.java
 
-# 3) 编译目标端模块（脚本不随仓库分发，仅本地开发环境持有）
-compile_rasp_bypass.bat          # Windows
-./compile_rasp_bypass.sh         # Linux/macOS
-
-# 4)（可选）编译 JNI 库（native/ 源码与 build_jni 脚本不随仓库分发）
-cd native && build_jni.bat win-x64    # 或 build_jni.sh linux-x64
-
-# 5) 打包
+# 3) 打包
 cd out/production/gsl5 && jar cf gsl5.jar *
 ```
 

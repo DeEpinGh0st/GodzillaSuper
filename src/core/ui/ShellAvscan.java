@@ -117,9 +117,7 @@ public class ShellAvscan extends JPanel {
             oneRow.add(String.valueOf(i));
             oneRow.add(key);
             oneRow.add(pid);
-            if (functions.isMessyCode(value)) {
-                value = new String(value.getBytes("GBK"), StandardCharsets.UTF_8);
-            }
+            // av.json 为 UTF-8 特征库，值原样输出；isMessyCode 对纯中文+数字串误判，GBK 转换反而变乱码
             oneRow.add(value);
             rows.add(oneRow);
         }
