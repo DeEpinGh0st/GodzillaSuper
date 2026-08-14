@@ -8,6 +8,87 @@
 
 
 
+## 总体说明
+
+基于 Godzilla 深度二次开发的 **WebShell 管理与红队后渗透平台**。在保留 Godzilla 全部能力的基础上，扩展了 **MCP 服务（AI 驱动）**、**MCP 插件工具（全内存加载）**、**RASP 绕过 + 字节码多态混淆**、**内存马注入**、**团队协作（多数据源）** 等能力，并提供完整的操作审计。
+
+> ⚠️ 本工具仅供**授权的安全测试与研究**使用，严禁用于任何非法用途。使用本工具产生的任何后果由使用者自行承担。详见文末[免责声明](#免责声明)。
+
+### 主要功能
+
+| 功能 | 说明 |
+|------|------|
+| 多平台 WebShell 管理 | JSP / ASPX / PHP / ASP / ASP.NET Core：文件管理、命令执行、数据库操作、批量测试、导入导出 |
+| MCP 服务（AI 操控） | 内置 HTTP/SSE 服务，Claude Desktop / Claude Code / Codex 一键接入；Shell 管理、命令执行、文件操作等 70+ 工具，Bearer Token 鉴权 |
+| MCP 插件工具 | `@McpTool` 注解机制，插件方法自动注册为 MCP 工具：提权（TH_TOOLS）、凭据抓取（Mimikatz）、杀软识别、OA 信息等 10 个工具，全部内存加载不落盘 |
+| RASP 绕过 | Detect→Plan→Exec→Verify 全链路管线、OpenRASP 深软关、JNI 原生执行、ASM 字节码多态混淆（随机字段名 + 随机 NOP） |
+| 内存马注入 | Tomcat（Filter / Servlet / Listener）、Spring（Controller）、Jetty、VM Anonymous Class |
+| 团队协作与审计 | 单机 SQLite / UNC 远程 SQLite / PostgreSQL 三数据源，全量操作审计 |
+| NetCore 动态载荷 | ASP.NET Core Middleware 载荷 + AES Base64 加密，文件 / 命令 / SQL / 插件加载 |
+| 检查更新 | 启动静默检查 GitHub Release，新版弹窗提示 |
+
+### 主要修改（相对原版 Godzilla）
+
+**新增**：
+- 全局 MCP 服务与 AI 操控（3.1.0）+ MCP 插件工具（3.1.5）
+- RASP 绕过全链路与字节码多态混淆（3.1.2）
+- NetCore 动态载荷（3.1.0）
+- 团队多数据源协作（单机 / UNC / PostgreSQL）
+- MCP Bearer Token 鉴权 + CLI 自动写配置 + Linux headless 支持（3.1.3）
+- 检查更新（3.1.4）
+
+**修复**：
+- PHP 混淆乱码、DisplayName 中文乱码（PHP/JSP/C# 连带修复，3.1.5）
+- 杀软识别名称乱码（3.1.5）
+- PHP 免杀模板 0KB（3.1.1）
+- 命令回显、Shell 加载遮罩竞态（3.1.2）
+
+完整明细见 [更新日志](#更新日志)。
+
+## 源码说明
+
+仓库只维护 **src 源码**：`src` 是全部功能的唯一源码来源，修改后重新打包即得到可运行的 `gsl5.jar`。
+
+```
+gsl/
+├── src/                     # 全部源码
+│   ├── core/                # 核心框架
+│   │   ├── ApplicationContext.java     # 全局上下文（RELEASE_TAG、godMode 等）
+│   │   ├── Db.java                     # SQLite 持久化层
+│   │   ├── MigrateDb.java              # SQLite → PostgreSQL 迁移
+│   │   ├── OperationAuditLog.java      # 操作审计
+│   │   ├── annotation/                 # MCP 工具注解（McpTool / McpParam）
+│   │   ├── shell/                      # ShellEntity 等
+│   │   ├── shellprocessor/             # ASP/PHP/JSP/C# 编码与变形处理器
+│   │   ├── c2profile/                  # C2 配置与内存马模板
+│   │   └── ui/                         # MainActivity、StartupModeDialog、ShellFileManager 等
+│   ├── shells/
+│   │   ├── channel/          # 请求通道（HTTP 直连 / C2 Profile）
+│   │   ├── payloads/         # 各平台动态载荷源码（java / csharp / netcore）
+│   │   ├── cryptions/        # 流量加密器（JavaAes / csharpAes / phpXor / aspXor / netcore）
+│   │   └── plugins/          # 插件（java / csharp / netcore / asp / php / generic + assets 目标端模块）
+│   ├── util/                 # HTTP 客户端、IP 库、工具函数
+│   ├── data/                 # 内置资源（av.json、qqwry.ipdb）
+│   └── META-INF/             # 打包清单（Main-Class: core.ui.MainActivity）
+└── KeyGen.java               # 授权文件生成器（输出 license.lic）
+```
+
+| 目录 | 作用 |
+|------|------|
+| `src/core/` | 应用核心：全局上下文（版本号）、SQLite 持久化（Db / MigrateDb）、操作审计、`@McpTool`/`@McpParam` 注解机制（MCP 插件工具）、Shell 实体、编码与变形处理器、C2 模板、全部界面 |
+| `src/shells/payloads/` | 各语言动态载荷源码（Java / C# / NetCore），生成 WebShell 时编译打包进载荷 |
+| `src/shells/cryptions/` | 流量加密器源码（JAVA_AES_BASE64 / CSHARP_AES_BASE64 / PHP_XOR / ASP_XOR / NETCORE_AES_BASE64 等） |
+| `src/shells/plugins/` | 插件工具（TH_TOOLS / Mimikatz / OaTools / Useradd / ShellAvscan / RaspBypass / McpService 等）；按目标语言分子目录，`generic/` 为应用级（MCP 服务），`assets/` 为目标端模块源码 |
+| `src/shells/channel/` | 请求通道实现（HTTP 直连 / C2 Profile 通道） |
+| `src/util/` | 通用工具（HTTP 客户端、纯真 IP 库、工具函数） |
+| `src/data/` | 内置资源（`av.json` 杀软指纹、`qqwry.ipdb` IP 地理位置库） |
+
+> 预编译 `gsl5.jar` 不纳入仓库（见 [Release 下载](#快速开始)）；`native/` JNI 源码与 RASP 编译脚本仅本地开发环境持有，不随仓库分发。
+> 运行/构建还需外部依赖（`lib/`：ASM、PostgreSQL 驱动等；`bin/`：okhttp、kotlin-stdlib 等），未纳入本仓库。
+> 修改源码后重新打包见 [编译与构建](#编译与构建)。
+
+---
+
 ## 更新日志
 
 ### 3.1.5（2026-08-10）
@@ -50,16 +131,12 @@
 
 
 
-基于 Godzilla 深度二次开发的 **WebShell 管理与红队后渗透平台**。在保留 Godzilla 全部能力的基础上，扩展了 **MCP 服务（AI 驱动）**、**团队协作（多数据源）**、**RASP 绕过 + 字节码多态混淆**、**内存马注入** 等能力，并提供完整的操作审计。
-
-> ⚠️ 本工具仅供**授权的安全测试与研究**使用，严禁用于任何非法用途。使用本工具产生的任何后果由使用者自行承担。详见文末[免责声明](#免责声明).
-
----
-
 ## 目录
 
+- [总体说明](#总体说明)
+- [源码说明](#源码说明)
+- [更新日志](#更新日志)
 - [核心特性](#核心特性)
-- [项目结构](#项目结构)
 - [快速开始](#快速开始)
 - [使用指南](#使用指南)
 - [MCP 服务（AI 操控）](#mcp-服务ai-操控)
@@ -119,53 +196,6 @@
 ### 6. 现代化 UI 与审计
 - FlatLaf 主题、壁纸管理器、透明度调节
 - `OperationAuditLog` 全量操作审计：记录**谁、何时、做了什么**，团队模式下可经 `oplog_query` 查询
-
----
-
-## 项目结构
-
-```
-gsl/
-├── src/                     # 全部源码（说明见下方「src 目录说明」）
-│   ├── core/                # 核心框架
-│   │   ├── ApplicationContext.java     # 全局上下文（RELEASE_TAG、godMode 等）
-│   │   ├── Db.java                     # SQLite 持久化层
-│   │   ├── MigrateDb.java              # SQLite → PostgreSQL 迁移
-│   │   ├── OperationAuditLog.java      # 操作审计
-│   │   ├── annotation/                 # MCP 工具注解（McpTool / McpParam）
-│   │   ├── shell/                      # ShellEntity 等
-│   │   ├── shellprocessor/             # ASP/PHP/JSP/C# 编码与变形处理器
-│   │   ├── c2profile/                  # C2 配置与内存马模板
-│   │   └── ui/                         # MainActivity、StartupModeDialog、ShellFileManager 等
-│   ├── shells/
-│   │   ├── channel/          # 请求通道（HTTP 直连 / C2 Profile）
-│   │   ├── payloads/         # 各平台动态载荷源码（java / csharp / netcore）
-│   │   ├── cryptions/        # 流量加密器（JavaAes / csharpAes / phpXor / aspXor / netcore）
-│   │   └── plugins/          # 插件（java / csharp / netcore / asp / php / generic + assets 目标端模块）
-│   ├── util/                 # HTTP 客户端、IP 库、工具函数
-│   ├── data/                 # 内置资源（av.json、qqwry.ipdb）
-│   └── META-INF/             # 打包清单（Main-Class: core.ui.MainActivity）
-└── KeyGen.java               # 授权文件生成器（输出 license.lic）
-```
-
-> 预编译 `gsl5.jar` 不纳入仓库（见 [Release 下载](#快速开始)）；`native/` JNI 源码与 RASP 编译脚本仅本地开发环境持有，不随仓库分发。
-> 运行/构建还需外部依赖（`lib/`：ASM、PostgreSQL 驱动等；`bin/`：okhttp、kotlin-stdlib 等），未纳入本仓库。
-
-### src 目录说明
-
-仓库只维护 **src 源码**：`src` 是全部功能的唯一源码来源，修改后重新打包即得到可运行的 `gsl5.jar`。
-
-| 目录 | 作用 |
-|------|------|
-| `src/core/` | 应用核心：全局上下文（版本号）、SQLite 持久化（Db / MigrateDb）、操作审计、`@McpTool`/`@McpParam` 注解机制（MCP 插件工具）、Shell 实体、编码与变形处理器、C2 模板、全部界面 |
-| `src/shells/payloads/` | 各语言动态载荷源码（Java / C# / NetCore），生成 WebShell 时编译打包进载荷 |
-| `src/shells/cryptions/` | 流量加密器源码（JAVA_AES_BASE64 / CSHARP_AES_BASE64 / PHP_XOR / ASP_XOR / NETCORE_AES_BASE64 等） |
-| `src/shells/plugins/` | 插件工具（TH_TOOLS / Mimikatz / OaTools / Useradd / ShellAvscan / RaspBypass / McpService 等）；按目标语言分子目录，`generic/` 为应用级（MCP 服务），`assets/` 为目标端模块源码 |
-| `src/shells/channel/` | 请求通道实现（HTTP 直连 / C2 Profile 通道） |
-| `src/util/` | 通用工具（HTTP 客户端、纯真 IP 库、工具函数） |
-| `src/data/` | 内置资源（`av.json` 杀软指纹、`qqwry.ipdb` IP 地理位置库） |
-
-修改源码后重新打包见 [编译与构建](#编译与构建)。
 
 ---
 
