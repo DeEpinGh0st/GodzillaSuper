@@ -3,8 +3,8 @@
 ##BUG反馈群
 
 
-<img width="1031" height="1449" alt="7c6b91de19a2d3d70cc36149cbda8d67" src="https://github.com/user-attachments/assets/e953b406-bb79-41ed-b99d-d98a43d49c8a" />
 
+<img width="1031" height="1449" alt="87f2443f311fbfdf84d55756ef93a7ed" src="https://github.com/user-attachments/assets/568b8869-edcb-40b1-ac77-aa07b75cce89" />
 
 
 
