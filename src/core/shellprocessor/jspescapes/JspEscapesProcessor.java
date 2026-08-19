@@ -80,7 +80,7 @@ public class JspEscapesProcessor implements ShellProcessor {
             char c = var4[var6];
             builder.append("&#");
             builder.append(this.makeLitter("0"));
-            builder.append(c);
+            builder.append((int) c);
             builder.append(";");
         }
 
@@ -97,7 +97,7 @@ public class JspEscapesProcessor implements ShellProcessor {
             char c = var4[var6];
             builder.append("&#x");
             builder.append(this.makeLitter("0"));
-            builder.append(functions.byteArrayToHex(String.valueOf(c).getBytes()));
+            builder.append(Integer.toHexString(c));
             builder.append(";");
         }
 
@@ -178,8 +178,23 @@ public class JspEscapesProcessor implements ShellProcessor {
         return content.getBytes(StandardCharsets.UTF_8);
     }
 
+    // MCP/headless 自动选项：设置后 doProcessor(shell, suffix) 不再弹 ChooseEscapes 对话框
+    private static final ThreadLocal<EscapesOptions> AUTO_OPTIONS = new ThreadLocal<>();
+
+    public static void setAutoOptions(EscapesOptions options) {
+        AUTO_OPTIONS.set(options);
+    }
+
+    public static void clearAutoOptions() {
+        AUTO_OPTIONS.remove();
+    }
+
     public byte[] doProcessor(byte[] shell, String suffix) {
-        return this.doProcessor(shell, suffix, ChooseEscapes.chooseEscapes(METHODS));
+        EscapesOptions opts = AUTO_OPTIONS.get();
+        if (opts == null) {
+            opts = ChooseEscapes.chooseEscapes(METHODS);
+        }
+        return this.doProcessor(shell, suffix, opts);
     }
 
     public byte[] doProcessor(byte[] var1, String var2, String var3) {

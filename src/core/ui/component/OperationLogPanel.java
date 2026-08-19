@@ -132,7 +132,8 @@ public class OperationLogPanel extends JPanel {
                 ? base.deriveFont(Font.BOLD, (float) titleSize)
                 : new Font(Font.SANS_SERIF, Font.BOLD, titleSize));
         int mono = Math.max(11, Math.round(12 * s));
-        logTextArea.setFont(new Font(Font.MONOSPACED, Font.PLAIN, mono));
+        Font global = core.ApplicationContext.getFont();
+        logTextArea.setFont(global != null ? global.deriveFont(Font.PLAIN, mono) : new Font(Font.MONOSPACED, Font.PLAIN, mono));
         int prefH = Math.max(110, Math.round(148 * s));
         int prefW = Math.round(260 * s);
         logScroll.setPreferredSize(new Dimension(prefW, prefH));

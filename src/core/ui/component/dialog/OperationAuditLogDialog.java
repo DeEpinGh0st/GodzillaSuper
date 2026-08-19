@@ -68,7 +68,8 @@ public class OperationAuditLogDialog extends JDialog {
                 OperationAuditLogDialog.this.setVisible(false);
             }
         });
-        this.historyView.applyDetailFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
+        Font global = core.ApplicationContext.getFont();
+        this.historyView.applyDetailFont(global != null ? global.deriveFont(Font.PLAIN, 12) : new Font(Font.MONOSPACED, Font.PLAIN, 12));
         Font ui = javax.swing.UIManager.getFont("Label.font");
         if (ui != null) {
             this.historyView.applyTreeFont(ui.deriveFont(Font.PLAIN, Math.max(11f, ui.getSize2D())));
