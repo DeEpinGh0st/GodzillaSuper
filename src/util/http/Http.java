@@ -34,6 +34,7 @@ import javax.net.ssl.SSLSocketFactory;
 import javax.net.ssl.TrustManager;
 import javax.net.ssl.X509ExtendedTrustManager;
 import javax.net.ssl.X509TrustManager;
+import okhttp3.ConnectionPool;
 import okhttp3.Headers;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
@@ -137,6 +138,8 @@ public class Http {
                 clientBuilder.readTimeout((long)readTimeOut, TimeUnit.MILLISECONDS);
                 clientBuilder.writeTimeout((long)readTimeOut, TimeUnit.MILLISECONDS);
             }
+            // close the TCP connection right after each request (no keep-alive reuse)
+            clientBuilder.connectionPool(new ConnectionPool(0, 1, TimeUnit.MILLISECONDS));
 
             LinkedHashMap<String, LinkedList<String>> headerMap = (LinkedHashMap)ApplicationContext.getGloballHttpHeaderX().clone();
             headerMap.putAll(header);
@@ -208,6 +211,9 @@ public class Http {
                 ResponseBody responseBody = response.body();
                 byte[] result = responseBody != null ? responseBody.bytes() : new byte[0];
                 return new HttpResponse(result, responseHeaderMap, response.code(), this.shellContext, this.getUri(), this.getCookieManager(), response.header("Content-Encoding"));
+            } finally {
+                client.dispatcher().executorService().shutdown();
+                client.connectionPool().evictAll();
             }
         } catch (Exception var24) {
             var24.printStackTrace();
