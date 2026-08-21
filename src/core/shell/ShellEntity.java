@@ -106,8 +106,12 @@ public class ShellEntity {
         this(false);
     }
 
+    /** Last init failure detail, surfaced by MCP instead of UI popups. */
+    public String lastInitError = null;
+
     public boolean initShellOpertion() {
         boolean state = false;
+        this.lastInitError = null;
 
         try {
             if (!StringUtils.isEmpty(this.id)) {
@@ -136,16 +140,19 @@ public class ShellEntity {
                         state = true;
                     } else {
                         Log.error(EasyI18N.getI18nString("有效载荷初始化失败!"));
+                        this.lastInitError = "有效载荷初始化失败";
                         GOptionPane.showMessageDialog((Component)null, "有效载荷初始化失败!");
                     }
                 } else {
                     Log.error(EasyI18N.getI18nString("加密器初始化失败!"));
+                    this.lastInitError = "加密器初始化失败";
                     GOptionPane.showMessageDialog((Component)null, "加密器初始化失败!");
                 }
 
                 return state;
             }
         } catch (Throwable var3) {
+            this.lastInitError = var3.getClass().getName() + ": " + var3.getMessage();
             GOptionPane.showThrowableMessageDialog((Component)null, "初始化shell时发生异常", var3);
             return state;
         }

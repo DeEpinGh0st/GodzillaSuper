@@ -1439,8 +1439,11 @@ public class MainActivity extends JFrame {
 
     public static void main(String[] args) {
         if (args.length >= 1 && "mcp".equals(args[0])) {
-            // Headless mode: must be set BEFORE any AWT/Swing class loading, or Linux headless env will NPE on Font
-            System.setProperty("java.awt.headless", "true");
+            // Headless mode: must be set BEFORE any AWT/Swing class loading, or Linux headless env will NPE on Font.
+            // Only force headless when the environment truly has no display; on desktop keep AWT so shell ops work.
+            if (java.awt.GraphicsEnvironment.isHeadless()) {
+                System.setProperty("java.awt.headless", "true");
+            }
             int p = 9123;
             String bindHost = "0.0.0.0";
             // args: mcp [port] [bindHost]
@@ -1463,6 +1466,10 @@ public class MainActivity extends JFrame {
             if (args.length >= 3) {
                 String a2 = args[2] == null ? "" : args[2].trim();
                 if (!a2.isEmpty()) bindHost = a2;
+            }
+            if (!new java.io.File("license.lic").exists() && !new java.io.File("tmp/license.lic").exists()) {
+                System.err.println("[MCP] license.lic not found in working directory");
+                System.exit(1);
             }
             try {
                 Class.forName("core.ApplicationConfig", true, Thread.currentThread().getContextClassLoader());

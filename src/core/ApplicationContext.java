@@ -235,7 +235,7 @@ public class ApplicationContext {
     public static final String VERSION = "4.15";
 
     /** GSL release tag, checked against GitHub latest for update notification. */
-    public static final String RELEASE_TAG = "3.1.6";
+    public static final String RELEASE_TAG = "3.1.7";
 
 
 
@@ -2738,7 +2738,17 @@ public class ApplicationContext {
 
 
 
-        return true;
+        
+
+
+
+        // Auto-generate built-in traffic-template profiles if missing (never overwrite user files)
+
+
+
+        ensureBuiltinProfiles(c2profileDir);
+
+return true;
 
 
 
@@ -2749,6 +2759,32 @@ public class ApplicationContext {
 
 
 
+
+    /** Write bundled profile templates (pngC2/pdfC2/gifC2) into profile/ when absent. */
+    private static void ensureBuiltinProfiles(File c2profileDir) {
+        String[] names = {"pngC2", "pdfC2", "gifC2"};
+        for (String name : names) {
+            File target = new File(c2profileDir, name + ".profile");
+            if (target.exists() && target.isFile() && target.length() > 0) {
+                continue;
+            }
+            try (java.io.InputStream in = ApplicationContext.class.getResourceAsStream("/core/c2profile/profileTemplate/" + name + ".profile")) {
+                if (in == null) {
+                    continue;
+                }
+                try (java.io.FileOutputStream fos = new java.io.FileOutputStream(target)) {
+                    byte[] buf = new byte[8192];
+                    int n;
+                    while ((n = in.read(buf)) > 0) {
+                        fos.write(buf, 0, n);
+                    }
+                }
+                Log.log("Auto-generated missing c2profile template: " + name + ".profile");
+            } catch (Exception e) {
+                Log.error(e);
+            }
+        }
+    }
 
     public static String[] listC2Profile() {
 

@@ -694,6 +694,8 @@ public class McpService implements Plugin {
      * @param host 0.0.0.0 / 127.0.0.1 / NIC IP
      */
     public static void startHeadless(int p, String host) {
+        // MCP mode: never pop UI dialogs; all errors are returned in tool responses / logged.
+        GOptionPane.SUPPRESS_UI = true;
         if (p <= 0) port = DEFAULT_PORT; else port = p;
         bindHost = normalizeBindHost(host);
         ensureAuthToken();
@@ -1298,13 +1300,23 @@ public class McpService implements Plugin {
             return serializeResult(result, sh);
         } catch (java.lang.reflect.InvocationTargetException ite) {
             Throwable c = ite.getCause();
-            String msg = c != null && c.getMessage() != null ? c.getMessage()
-                    : (c != null ? c.toString() : ite.toString());
-            return "执行失败: " + msg;
+            return "执行失败: " + briefTrace(c != null ? c : ite);
         } catch (Exception e) {
-            String msg = e.getMessage() != null ? e.getMessage() : e.toString();
-            return "执行失败: " + msg;
+            return "执行失败: " + briefTrace(e);
         }
+    }
+
+    /** Short stack trace for MCP responses: message + top frames. */
+    private static String briefTrace(Throwable t) {
+        java.io.StringWriter sw = new java.io.StringWriter();
+        t.printStackTrace(new java.io.PrintWriter(sw));
+        String trace = sw.toString();
+        String[] lines = trace.split("\n");
+        StringBuilder sb = new StringBuilder();
+        int max = Math.min(lines.length, 15);
+        for (int i = 0; i < max; i++) sb.append(lines[i]).append("\n");
+        if (lines.length > max) sb.append("... (truncated)");
+        return sb.toString();
     }
 
     private static boolean payloadMatches(ShellEntity sh, String payloadName) {
@@ -1509,7 +1521,7 @@ public class McpService implements Plugin {
                 // init with DB value (fallback UTF-8); auto-detect only if empty or force auto
                 sh.setEncoding(safeEncoding(dbEncoding));
             }
-            if (!sh.initShellOpertion()) throw new RuntimeException("Shell \u521d\u59cb\u5316\u5931\u8d25");
+            if (!sh.initShellOpertion()) throw new RuntimeException("Shell \u521d\u59cb\u5316\u5931\u8d25" + (sh.lastInitError != null ? ": " + sh.lastInitError : ""));
             if (encOverride != null) {
                 // explicit charset: keep and sync module only
                 sh.setEncoding(safeEncoding(sh.getEncoding()));
@@ -2048,7 +2060,16 @@ public class McpService implements Plugin {
             String first = (info != null && !info.isEmpty()) ? info.split("\n")[0] : "";
             return "\u8fde\u63a5\u6d4b\u8bd5\u6210\u529f | encoding=" + safeEncoding(sh.getEncoding()) + " | " + first;
         } catch (Exception e) {
-            return "\u8fde\u63a5\u6d4b\u8bd5\u5931\u8d25: " + (e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
+            java.io.StringWriter sw = new java.io.StringWriter();
+            e.printStackTrace(new java.io.PrintWriter(sw));
+            String trace = sw.toString();
+            String[] lines = trace.split("\n");
+            if (lines.length > 40) {
+                StringBuilder sb = new StringBuilder();
+                for (int i = 0; i < 40; i++) sb.append(lines[i]).append("\n");
+                trace = sb.toString() + "... (truncated)";
+            }
+            return "\u8fde\u63a5\u6d4b\u8bd5\u5931\u8d25: " + (e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName()) + "\n" + trace;
         }
     }
 
@@ -2447,7 +2468,7 @@ public class McpService implements Plugin {
             if (isC2 && c2Profile != null && !c2Profile.isEmpty()) {
                 // C2 cryption: bypass 3-arg generate() which has hardcoded UI dialogs.
                 // Instead directly load template and call generate() ourselves.
-                Object ctx = C2ProfileLoader.loadC2Profile(c2Profile); // 1-arg version
+                Object ctx = C2ProfileLoader.loadC2Profile(ApplicationContext.getC2Profile(c2Profile), payload); // content + payload
                 Object c2ProfileCtx = ctx.getClass().getMethod("getC2ProfileContext").invoke(ctx);
                 java.lang.reflect.Method listTpl = C2ProfileContext.class.getMethod("listC2ProfileTemplate", String.class);
                 java.util.LinkedList<?> templates = (java.util.LinkedList<?>) listTpl.invoke(c2ProfileCtx, payload);
