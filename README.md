@@ -86,8 +86,7 @@ gsl/
 │   │   └── plugins/          # 插件（java / csharp / netcore / asp / php / generic + assets 目标端模块）
 │   ├── util/                 # HTTP 客户端、IP 库、工具函数
 │   ├── data/                 # 内置资源（av.json、qqwry.ipdb）
-│   └── META-INF/             # 打包清单（Main-Class: core.ui.MainActivity）
-└── KeyGen.java               # 授权文件生成器（输出 license.lic）
+│   └── META-INF/             # 打包清单（Main-Class: core.Gsl5Main）
 ```
 
 | 目录 | 作用 |
@@ -114,7 +113,7 @@ gsl/
 - 新增 `pngC2` / `pdfC2` / `gifC2` 三个 profile 模板（jar 内嵌，profile 目录缺失时启动自动生成）
 - **MCP 免弹窗**：MCP 模式下所有 UI 弹窗转日志输出，异常堆栈直接返回给 AI 判断
 - 修复 `shell_create` 指定 c2Profile 失败、`shell_add` 的 c2Profile 未持久化
-- MCP CLI 桌面环境不再强制 headless（shell 操作可用），无显示环境仍自动 headless；license.lic 缺失直接报错退出
+- MCP CLI 桌面环境不再强制 headless（shell 操作可用），无显示环境仍自动 headless
 - 修复 GUI 报错弹窗布局（还原 699x333 固定尺寸与父窗口居中）
 
 - 修复发包后长连接不关闭：OkHttp 连接池 keep-alive 挂起（客户端最长 5 分钟）→ 每次请求完成立即断开 TCP
@@ -223,14 +222,6 @@ gsl/
 
 ### 0. 环境要求
 - **Java**：JDK / JRE 8 或以上（开发机已验证 `1.8.0_431`）
-- **授权文件**：`license.lic` 必须存在于运行目录
-
-### 1. 生成授权
-编译并运行 `KeyGen.java`，生成 `license.lic` 放到运行目录（可设置有效期、绑定目录）：
-```bash
-javac KeyGen.java && java KeyGen
-```
-授权格式 `GSL1:<AES-CBC 密文>`，内含 `notBefore | notAfter | 绑定目录 SHA256` 并用 HMAC-SHA256 签名。
 
 ### 2. 启动 GUI
 ```bash
@@ -440,7 +431,6 @@ url = "http://127.0.0.1:9123/sse"
 
 | 文件 | 说明 |
 |------|------|
-| `license.lic` | 授权文件，格式 `GSL1:<AES-CBC 密文>`，由 `KeyGen.java` 生成，可绑定目录 + 有效期 |
 | `data.db` | SQLite 数据库，存储 Shell 配置 / 插件 / 环境变量 / 设置 / 分组 |
 | `config.yaml` | 运行配置（MCP 端口、认证、团队 PG 连接等） |
 
@@ -499,9 +489,6 @@ jar uf out/artifacts/gsl5_jar/gsl5.jar shells/plugins/generic/McpService.class
 ---
 
 ## 常见问题
-
-**Q：启动报 `License invalid`？**
-A：确保 `license.lic` 在运行目录且未过期；用 `KeyGen.java` 重新生成。
 
 **Q：MCP 连接失败？**
 A：检查绑定地址与端口（默认 `0.0.0.0:9123`）是否被占用、防火墙是否放行；确认 Claude / Codex 配置的 URL 与实际可访问地址一致。本机客户端可用 `127.0.0.1`，跨机需写网卡 IP 并用 `mcp_config`/`写入配置` 生成对应 URL。

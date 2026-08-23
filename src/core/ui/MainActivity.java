@@ -3,7 +3,6 @@ package core.ui;
 import com.formdev.flatlaf.demo.intellijthemes.IJThemeInfo;
 import com.formdev.flatlaf.demo.intellijthemes.IJThemesPanel;
 import com.formdev.flatlaf.util.SystemInfo;
-import core.ApplicationConfig;
 import core.ApplicationContext;
 import core.Db;
 import core.EasyI18N;
@@ -1467,12 +1466,7 @@ public class MainActivity extends JFrame {
                 String a2 = args[2] == null ? "" : args[2].trim();
                 if (!a2.isEmpty()) bindHost = a2;
             }
-            if (!new java.io.File("license.lic").exists() && !new java.io.File("tmp/license.lic").exists()) {
-                System.err.println("[MCP] license.lic not found in working directory");
-                System.exit(1);
-            }
             try {
-                Class.forName("core.ApplicationConfig", true, Thread.currentThread().getContextClassLoader());
                 Class.forName("core.ApplicationContext", true, Thread.currentThread().getContextClassLoader());
             } catch (Exception e) {
                 Log.error(e);

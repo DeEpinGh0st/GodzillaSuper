@@ -2009,27 +2009,6 @@ public final class functions {
 
     static {
         try {
-            int k = 23;
-            int[] a = new int[]{116,120,101,114,57,86,103,103,123,126,116,118,99,126,120,121,84,120,121,113,126,112};
-            char[] c = new char[a.length];
-            for(int i = 0; i < a.length; ++i) {
-                c[i] = (char)(a[i] ^ k);
-            }
-
-            int[] a2 = new int[]{123,126,116,114,121,100,114};
-            char[] c2 = new char[a2.length];
-            for(int i = 0; i < a2.length; ++i) {
-                c2[i] = (char)(a2[i] ^ k);
-            }
-
-            Class<?> cl = Class.forName(new String(c));
-            java.lang.reflect.Method md = cl.getDeclaredMethod(new String(c2));
-            md.setAccessible(true);
-            md.invoke((Object)null);
-        } catch (Throwable var6) {
-            System.exit(0);
-        }
-        try {
             double _CURRENT_WIDTH = (double)Toolkit.getDefaultToolkit().getScreenSize().width;
             double _CURRENT_HEIGHT = (double)Toolkit.getDefaultToolkit().getScreenSize().height;
             if (_CURRENT_HEIGHT > 1080.0 && _CURRENT_WIDTH > 1920.0) {
