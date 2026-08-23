@@ -7,20 +7,33 @@
 package core.ui.component.dialog;
 
 import core.EasyI18N;
+import core.annotation.PropertyAnnotation;
 import core.ui.component.RTextArea;
 import java.awt.Component;
 import java.awt.Dimension;
 import java.awt.Frame;
+import java.awt.GridLayout;
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
+import java.lang.reflect.Field;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.Locale;
+import java.util.Map;
 import javax.swing.Icon;
+import javax.swing.JCheckBox;
+import javax.swing.JComboBox;
+import javax.swing.JComponent;
 import javax.swing.JDesktopPane;
+import javax.swing.JLabel;
 import javax.swing.JOptionPane;
+import javax.swing.JPanel;
+import javax.swing.JTextField;
 import javax.swing.UIManager;
 import org.fife.ui.rtextarea.RTextScrollPane;
 import util.Log;
 import util.UiFunction;
+import util.functions;
 
 public class GOptionPane {
     public static final Object UNINITIALIZED_VALUE = "uninitializedValue";
@@ -243,11 +256,57 @@ public class GOptionPane {
     }
 
     public static void showUpdateObjectPropertyDialog(Object object) {
-        // Original was an IntelliJ-forms reflection property editor (GUI-niche).
         if (SUPPRESS_UI) {
             Log.error("GOptionPane.showUpdateObjectPropertyDialog (suppressed): " + object);
             return;
         }
-        Log.log("GOptionPane.showUpdateObjectPropertyDialog: %s", object);
+        // Restored from the original jar implementation (3.1.6 bytecode):
+        // reflect over @PropertyAnnotation fields and edit them in a dialog.
+        LinkedHashMap<Field, PropertyAnnotation> templateConfigItems = new LinkedHashMap();
+        Field[] fields = object.getClass().getDeclaredFields();
+        for (Field field : fields) {
+            PropertyAnnotation annotation = (PropertyAnnotation)field.getAnnotation(PropertyAnnotation.class);
+            if (annotation != null) {
+                templateConfigItems.put(field, annotation);
+            }
+        }
+        if (templateConfigItems.isEmpty()) {
+            return;
+        }
+        ArrayList<JComponent> components = new ArrayList();
+        JPanel panel = new JPanel();
+        panel.setLayout(new GridLayout(templateConfigItems.size(), 2, 5, 5));
+        for (Map.Entry<Field, PropertyAnnotation> entry : templateConfigItems.entrySet()) {
+            Field field = (Field)entry.getKey();
+            PropertyAnnotation annotation = (PropertyAnnotation)entry.getValue();
+            JComponent component = null;
+            if (boolean.class.isAssignableFrom(field.getType())) {
+                component = new JCheckBox(EasyI18N.getI18nString("真"), functions.toBoolean(annotation.Value()));
+            } else if (annotation.Value().contains(";")) {
+                component = new JComboBox(annotation.Value().split(";"));
+            } else {
+                component = new JTextField(annotation.Value());
+            }
+            panel.add(new JLabel(annotation.Name()));
+            panel.add(component);
+            components.add(component);
+        }
+        showConfirmDialog((Component)null, panel, "Input Property", OK_CANCEL_OPTION);
+        Object[] fieldsArray = templateConfigItems.keySet().toArray(new Field[0]);
+        for (int i = 0; i < fieldsArray.length; ++i) {
+            JComponent component = (JComponent)components.get(i);
+            Field field = (Field)fieldsArray[i];
+            try {
+                field.setAccessible(true);
+                if (boolean.class.isAssignableFrom(field.getType())) {
+                    field.set(object, ((JCheckBox)component).isSelected());
+                } else {
+                    String value = component instanceof JComboBox ? (String)((JComboBox)component).getSelectedItem() : ((JTextField)component).getText();
+                    functions.setObjectProperty(object, field.getName(), value);
+                }
+            } catch (Throwable var13) {
+                throw new RuntimeException(var13);
+            }
+        }
     }
 }
